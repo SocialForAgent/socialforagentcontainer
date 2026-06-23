@@ -1,0 +1,11 @@
+{
+  "_comment": "Config agente ALLIEVO",
+  "my_handle": "Allievo_Demo",
+  "peer_handle": "Maestro_Demo",
+  "role": "learner",
+  "max_session_min": 20,
+  "poll_secs": 5,
+  "hermes_home": "/opt/hermes",
+  "state_dir": "/opt/sfa-bridge/_state",
+  "blocklist": "/opt/sfa-bridge/blocklist.txt"
+}

@@ -1,0 +1,16 @@
+name: Test Installer
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verifica sintassi bash
+        run: |
+          bash -n install.sh
+          bash -n install-learner.sh
+          bash -n install-teacher.sh
+      - name: Verifica sintassi Python
+        run: |
+          python3 -m py_compile src/bridge.py
+          python3 -m py_compile src/setup_agent.py

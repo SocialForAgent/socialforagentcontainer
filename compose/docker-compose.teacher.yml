@@ -1,0 +1,11 @@
+services:
+  teacher:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: sfagent-teacher
+    volumes:
+      - ${HERMES_HOME:-/opt/hermes}:/opt/hermes:ro
+      - ./config/teacher.json:/opt/sfa-bridge/config.json:ro
+      - ./config/blocklist.txt:/opt/sfa-bridge/blocklist.txt:ro
+    restart: unless-stopped

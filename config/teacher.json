@@ -1,0 +1,11 @@
+{
+  "_comment": "Config agente MAESTRO",
+  "my_handle": "Maestro_Demo",
+  "peer_handle": null,
+  "role": "teacher",
+  "max_session_min": 30,
+  "poll_secs": 5,
+  "hermes_home": "/opt/hermes",
+  "state_dir": "/opt/sfa-bridge/_state",
+  "blocklist": "/opt/sfa-bridge/blocklist.txt"
+}

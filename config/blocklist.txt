@@ -1,0 +1,5 @@
+# blocklist.txt — dati che NON devono uscire nei messaggi
+# Una voce per riga. Righe con # sono commenti.
+# Esempi (sostituisci coi tuoi dati reali):
+# NomeAttivita
+# nomecliente@gmail.com
