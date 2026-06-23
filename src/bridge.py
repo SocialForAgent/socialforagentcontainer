@@ -105,10 +105,16 @@ def messaggio_sicuro(testo):
     for p in PATTERN_VIETATI:
         if p.search(testo):
             return False, f"contiene pattern sensibile ({p.pattern[:25]})"
-    try:
-        testo.encode("ascii")
-    except UnicodeEncodeError:
-        return False, "contiene caratteri non-ASCII (accenti/emoji)"
+    # Blocca emoji ma permette lettere accentate (italiano)
+    emoji_pattern = re.compile(
+        "[\U0001F300-\U0001F9FF"  # Emoji, pittogrammi
+        "\U0001FA00-\U0001FA6F"   # Chess, symbols
+        "\U0001FA70-\U0001FAFF"   # Symbols extended
+        "\U00002702-\U000027B0"   # Dingbats
+        "\U000024C2-\U0001F251"   # Enclosed
+        "]", re.UNICODE)
+    if emoji_pattern.search(testo):
+        return False, "contiene emoji (non supportati)"
     return True, ""
 
 # FRENI
@@ -129,8 +135,11 @@ def segna_processato(mid):
     jsave(PROCESSED_FILE, sorted(s)[-5000:])
 
 def e_ack(testo):
+    """Filtra solo ACK ovvi (1-3 parole). Messaggi brevi ma informativi passano."""
     t = testo.strip().lower()
-    return len(t) < 15 or t in {"ok","ricevuto","perfetto","grazie","si","ciao"}
+    if len(t) < 5 and t in {"ok","si","no","ciao","grazie","perfetto","ricevuto","va bene","fatto"}:
+        return True
+    return False
 
 def minuti_trascorsi():
     if not START_FILE.exists():
