@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 bridge.py - IL PONTE tra socialforagent (relay) e Hermes (cervello).
-Versione client v1.0.0: logging su stdout, env vars, signal handling,
-parser risposta migliorato, messaggio iniziale, privacy filter.
+Versione client v1.1.0: TURN-BASED ENFORCED, logging su stdout, env vars,
+signal handling, parser risposta migliorato, messaggio iniziale, privacy filter.
 
 Questo file gira sulle VPS dei CLIENTI (non sul relay).
+CONVERSAZIONE ESCLUSIVAMENTE TRAMITE SOCIALFORAGENT - nessuna risposta diretta.
 """
 import json, os, re, subprocess, sys, time, signal, logging, argparse
 from datetime import datetime, timezone
@@ -78,13 +79,67 @@ INITIAL_MSG     = CFG.get("_initial_message", "")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_FILE = STATE_DIR / f"processed_{MY_HANDLE}.json"
 SESSION_FILE   = STATE_DIR / f"session_{MY_HANDLE}.txt"
+TURN_FILE      = STATE_DIR / f"turn_{MY_HANDLE}.json"
 STOP_FILE      = STATE_DIR / "STOP"
 START_FILE     = STATE_DIR / f"start_{MY_HANDLE}.txt"
+CONVERSATION_LOG = STATE_DIR / f"conversation_{MY_HANDLE}.jsonl"
+
+# TURN-BASED STATE MANAGEMENT
+def load_turn_state():
+    if TURN_FILE.exists():
+        return json.loads(TURN_FILE.read_text())
+    initial_state = {
+        "status": "idle",
+        "last_message_from": None,
+        "last_message_time": None,
+        "turn_count": 0,
+        "session_started": datetime.now(timezone.utc).isoformat(),
+    }
+    save_turn_state(initial_state)
+    return initial_state
+
+def save_turn_state(state):
+    tmp = TURN_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.rename(TURN_FILE)
+
+def can_send_message():
+    state = load_turn_state()
+    return state["status"] in ("idle", "my_turn")
+
+def mark_message_sent():
+    state = load_turn_state()
+    state["status"] = "waiting"
+    state["last_message_from"] = MY_HANDLE
+    state["last_message_time"] = datetime.now(timezone.utc).isoformat()
+    state["turn_count"] = state.get("turn_count", 0) + 1
+    save_turn_state(state)
+    logger.info(f"[TURN] Messaggio inviato. Turno passato a {PEER_HANDLE}. Status: waiting")
+
+def mark_message_received(from_handle):
+    state = load_turn_state()
+    state["status"] = "my_turn"
+    state["last_message_from"] = from_handle
+    state["last_message_time"] = datetime.now(timezone.utc).isoformat()
+    save_turn_state(state)
+    logger.info(f"[TURN] Messaggio ricevuto da {from_handle}. Status: my_turn")
+
+def log_conversation_entry(direction, handle, content, metadata=None):
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "direction": direction,
+        "handle": handle,
+        "content": content[:500],
+        "turn_number": load_turn_state().get("turn_count", 0),
+        "metadata": metadata or {},
+    }
+    with open(CONVERSATION_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 # PRIVACY FILTER
 PATTERN_VIETATI = [
     re.compile(r"\b[\w.-]+@[\w.-]+\.\w+\b"),
-    re.compile(r"\b\d{1,3}(?:\.\.\d{1,3}){3}\b"),
+    re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
     re.compile(r"\bpw\b|\bpassword\b|\bpasswd\b", re.I),
     re.compile(r"\b[A-Za-z0-9]{20,}\b"),
     re.compile(r"\+?\d[\d\s().-]{7,}\d"),
@@ -105,19 +160,19 @@ def messaggio_sicuro(testo):
     for p in PATTERN_VIETATI:
         if p.search(testo):
             return False, f"contiene pattern sensibile ({p.pattern[:25]})"
-    # Blocca emoji ma permette lettere accentate (italiano)
+    # Blocca emoji ma permette lettere accentate (italiano: àèìòù)
     emoji_pattern = re.compile(
-        "[\U0001F300-\U0001F9FF"  # Emoji, pittogrammi
-        "\U0001FA00-\U0001FA6F"   # Chess, symbols
-        "\U0001FA70-\U0001FAFF"   # Symbols extended
-        "\U00002702-\U000027B0"   # Dingbats
-        "\U000024C2-\U0001F251"   # Enclosed
+        "[\U0001F300-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F"
+        "\U0001FA70-\U0001FAFF"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
         "]", re.UNICODE)
     if emoji_pattern.search(testo):
         return False, "contiene emoji (non supportati)"
     return True, ""
 
-# FRENI
+# UTILITY
 def jload(p, default):
     return json.loads(p.read_text()) if p.exists() else default
 
@@ -151,7 +206,7 @@ def minuti_trascorsi():
 def tempo_scaduto():
     return minuti_trascorsi() >= MAX_SESSION_MIN
 
-# HERMES
+# HERMES - SOLO TURN-BASED, NESSUNA RISPOSTA DIRETTA
 def verifica_hermes():
     try:
         subprocess.run(["hermes", "--version"], capture_output=True, check=True)
@@ -169,7 +224,6 @@ def estrai_risposta(stdout):
     righe = stdout.splitlines()
     dentro = False
     risposta = []
-
     for r in righe:
         if any(k in r for k in ("memory", "recall", "Context:", "Files:", "Notes:")):
             continue
@@ -183,7 +237,6 @@ def estrai_risposta(stdout):
             pulita = r.strip().strip("│┃║").strip()
             if pulita and not set(pulita) <= set("─┈ ┃╎│║"):
                 risposta.append(pulita)
-
     if not risposta:
         for r in reversed(righe):
             pulita = r.strip()
@@ -191,7 +244,6 @@ def estrai_risposta(stdout):
                 risposta.insert(0, pulita)
             if len(risposta) >= 5:
                 break
-
     return " ".join(risposta).strip()
 
 def estrai_session_id(stdout):
@@ -233,30 +285,42 @@ def get_bot():
         sys.exit(1)
     return bot
 
-# LOOP
+# MAIN LOOP - TURN-BASED ENFORCED
 def main():
     if not verifica_hermes():
         logger.error("Comando 'hermes' non trovato. Installa Hermes o montalo come volume.")
         sys.exit(1)
 
-    logger.info(f"Avvio - handle={MY_HANDLE} ruolo={ROLE} tetto={MAX_SESSION_MIN}min")
+    logger.info("=" * 60)
+    logger.info(f"BRIDGE TURN-BASED v1.1.0")
+    logger.info(f"Handle: {MY_HANDLE} | Ruolo: {ROLE} | Tetto: {MAX_SESSION_MIN}min")
+    logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO (modalità broadcast)'}")
+    logger.info("=" * 60)
+    logger.info("CONVERSAZIONE ESCLUSIVAMENTE VIA SOCIALFORAGENT")
+    logger.info("Hermes risponde SOLO quando è il tuo turno.")
     logger.info(f"Kill-switch: touch {STOP_FILE} per fermare")
+    logger.info("=" * 60)
 
     bot = get_bot()
     minuti_trascorsi()
 
-    # Messaggio iniziale (solo se specificato e siamo learner)
+    # Messaggio iniziale (solo learner)
     if INITIAL_MSG and PEER_HANDLE and ROLE == "learner":
-        logger.info(f"Invio messaggio iniziale a {PEER_HANDLE}")
-        try:
-            ok, motivo = messaggio_sicuro(INITIAL_MSG)
-            if ok:
-                bot.send(PEER_HANDLE, INITIAL_MSG, intent=ROLE)
-                logger.info(f"-> {PEER_HANDLE}: {INITIAL_MSG[:80]}")
-            else:
-                logger.warning(f"Messaggio iniziale BLOCCATO ({motivo})")
-        except Exception as e:
-            logger.error(f"Errore invio messaggio iniziale: {e}")
+        if can_send_message():
+            logger.info(f"[INIT] Invio messaggio iniziale a {PEER_HANDLE}")
+            try:
+                ok, motivo = messaggio_sicuro(INITIAL_MSG)
+                if ok:
+                    bot.send(PEER_HANDLE, INITIAL_MSG, intent=ROLE)
+                    log_conversation_entry("out", PEER_HANDLE, INITIAL_MSG, {"type": "initial", "role": ROLE})
+                    mark_message_sent()
+                    logger.info(f"[INIT] -> {PEER_HANDLE}: {INITIAL_MSG[:80]}")
+                else:
+                    logger.warning(f"[INIT] Messaggio iniziale BLOCCATO ({motivo})")
+            except Exception as e:
+                logger.error(f"[INIT] Errore invio messaggio iniziale: {e}")
+        else:
+            logger.warning("[INIT] Non posso inviare: non è il mio turno")
 
     while True:
         if shutdown_requested:
@@ -269,6 +333,12 @@ def main():
 
         if tempo_scaduto():
             logger.info(f"Tempo scaduto ({MAX_SESSION_MIN}min). Chiusura sessione.")
+            if PEER_HANDLE and can_send_message():
+                try:
+                    bot.send(PEER_HANDLE, "[SESSIONE TERMINATA - Tempo scaduto]", intent=ROLE)
+                    mark_message_sent()
+                except Exception as e:
+                    logger.error(f"Errore invio chiusura: {e}")
             break
 
         try:
@@ -277,6 +347,8 @@ def main():
             logger.error(f"Errore get_unread: {e}")
             time.sleep(POLL_SECS)
             continue
+
+        messaggi_da_rispondere = []
 
         for msg in nuovi or []:
             mid = msg.get("message_id")
@@ -287,35 +359,56 @@ def main():
                 continue
             segna_processato(mid)
 
+            log_conversation_entry("in", mittente, testo, {"message_id": mid})
+
             if e_ack(testo):
-                logger.info(f"Ack da {mittente}, non rispondo")
+                logger.info(f"[ACK] da {mittente}, non rispondo")
                 continue
 
             if PEER_HANDLE and mittente != PEER_HANDLE:
-                logger.info(f"Messaggio da {mittente} != peer atteso ({PEER_HANDLE}), ignoro")
+                logger.info(f"[IGNORE] Messaggio da {mittente} != peer atteso ({PEER_HANDLE})")
                 continue
 
-            logger.info(f"<- {mittente}: {testo[:80]}")
+            logger.info(f"[RECV] <- {mittente}: {testo[:80]}")
+            messaggi_da_rispondere.append((mittente, testo, mid))
 
+        for mittente, testo, mid in messaggi_da_rispondere:
+            mark_message_received(mittente)
+
+            if not can_send_message():
+                logger.warning(f"[TURN] Non è il mio turno, salto risposta a {mittente}")
+                continue
+
+            logger.info(f"[TURN] Interrogo Hermes per rispondere a {mittente}...")
             risposta = sveglia_hermes(testo)
+
             if not risposta:
-                logger.warning("Hermes non ha prodotto risposta, salto")
+                logger.warning("[HERMES] Nessuna risposta prodotta, salto")
                 continue
+
+            logger.info(f"[HERMES] Risposta generata ({len(risposta)} caratteri)")
 
             ok, motivo = messaggio_sicuro(risposta)
             if not ok:
-                logger.warning(f"!! RISPOSTA BLOCCATA ({motivo}). NON inviata.")
-                continue
+                logger.warning(f"[BLOCK] !! RISPOSTA BLOCCATA ({motivo}). NON inviata.")
+                risposta = f"[Messaggio bloccato dal filtro privacy: {motivo}]"
 
             try:
                 bot.send(mittente, risposta, intent=ROLE)
-                logger.info(f"-> {mittente}: {risposta[:80]}")
+                log_conversation_entry("out", mittente, risposta, {"reply_to": mid, "filtered": not ok})
+                mark_message_sent()
+                logger.info(f"[SEND] -> {mittente}: {risposta[:80]}")
             except Exception as e:
-                logger.error(f"Errore send: {e}")
+                logger.error(f"[SEND] Errore send: {e}")
 
         time.sleep(POLL_SECS)
 
-    logger.info("Terminato.")
+    state = load_turn_state()
+    state["status"] = "completed"
+    state["session_ended"] = datetime.now(timezone.utc).isoformat()
+    save_turn_state(state)
+    logger.info("Terminato. Stato: completed.")
+    logger.info(f"Log conversazione: {CONVERSATION_LOG}")
 
 if __name__ == "__main__":
     main()
