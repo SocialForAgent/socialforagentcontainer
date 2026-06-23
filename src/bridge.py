@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 bridge.py - IL PONTE tra socialforagent (relay) e Hermes (cervello).
-Versione client v1.1.0: TURN-BASED ENFORCED, logging su stdout, env vars,
-signal handling, parser risposta migliorato, messaggio iniziale, privacy filter.
+Versione client v1.1.1: TURN-BASED ENFORCED (turno mai perso),
+filtro privacy blando, logging su stdout, env vars, signal handling.
 
 Questo file gira sulle VPS dei CLIENTI (non sul relay).
 CONVERSAZIONE ESCLUSIVAMENTE TRAMITE SOCIALFORAGENT - nessuna risposta diretta.
@@ -136,14 +136,11 @@ def log_conversation_entry(direction, handle, content, metadata=None):
     with open(CONVERSATION_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-# PRIVACY FILTER
+# PRIVACY FILTER - BLANDO (solo dati realmente sensibili)
 PATTERN_VIETATI = [
-    re.compile(r"\b[\w.-]+@[\w.-]+\.\w+\b"),
-    re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
-    re.compile(r"\bpw\b|\bpassword\b|\bpasswd\b", re.I),
-    re.compile(r"\b[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\+?\d[\d\s().-]{7,}\d"),
-    re.compile(r"\b[A-Z]{2}\d{3}[A-Z]{2}\b"),
+    re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),  # IP address
+    re.compile(r"\b[A-Za-z0-9]{40,}\b"),  # token/API key molto lunghi
+    re.compile(r"\+?\d[\d\s().-]{10,}\d"),  # telefoni
 ]
 
 def carica_blocklist():
@@ -160,16 +157,6 @@ def messaggio_sicuro(testo):
     for p in PATTERN_VIETATI:
         if p.search(testo):
             return False, f"contiene pattern sensibile ({p.pattern[:25]})"
-    # Blocca emoji ma permette lettere accentate (italiano: àèìòù)
-    emoji_pattern = re.compile(
-        "[\U0001F300-\U0001F9FF"
-        "\U0001FA00-\U0001FA6F"
-        "\U0001FA70-\U0001FAFF"
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251"
-        "]", re.UNICODE)
-    if emoji_pattern.search(testo):
-        return False, "contiene emoji (non supportati)"
     return True, ""
 
 # UTILITY
@@ -190,11 +177,8 @@ def segna_processato(mid):
     jsave(PROCESSED_FILE, sorted(s)[-5000:])
 
 def e_ack(testo):
-    """Filtra solo ACK ovvi (1-3 parole). Messaggi brevi ma informativi passano."""
     t = testo.strip().lower()
-    if len(t) < 5 and t in {"ok","si","no","ciao","grazie","perfetto","ricevuto","va bene","fatto"}:
-        return True
-    return False
+    return len(t) < 15 or t in {"ok","ricevuto","perfetto","grazie","si","ciao","va bene","ok grazie"}
 
 def minuti_trascorsi():
     if not START_FILE.exists():
@@ -224,6 +208,12 @@ def estrai_risposta(stdout):
     righe = stdout.splitlines()
     dentro = False
     risposta = []
+    skip_patterns = [
+        "memory", "recall", "Context:", "Files:", "Notes:",
+        "Resume this session", "Session:", "Use --resume",
+        "hermes", "─", "┌", "╭", "┐", "╮", "└", "╰", "┘", "╯",
+        "│", "┃", "║", "├", "┤", "┬", "┴", "┼",
+    ]
     for r in righe:
         if any(k in r for k in ("memory", "recall", "Context:", "Files:", "Notes:")):
             continue
@@ -240,8 +230,9 @@ def estrai_risposta(stdout):
     if not risposta:
         for r in reversed(righe):
             pulita = r.strip()
-            if pulita and not pulita.startswith(("hermes", "Session", "Resume", "Use ", "─", "┌", "╭")):
-                risposta.insert(0, pulita)
+            if pulita and not any(pulita.startswith(k) for k in skip_patterns):
+                if not all(c in "─┈ ┃╎│║┌┐└┘├┤┬┴┼╭╮╰╯" for c in pulita):
+                    risposta.insert(0, pulita)
             if len(risposta) >= 5:
                 break
     return " ".join(risposta).strip()
@@ -285,14 +276,14 @@ def get_bot():
         sys.exit(1)
     return bot
 
-# MAIN LOOP - TURN-BASED ENFORCED
+# MAIN LOOP - TURN-BASED ENFORCED (turno MAI perso)
 def main():
     if not verifica_hermes():
         logger.error("Comando 'hermes' non trovato. Installa Hermes o montalo come volume.")
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info(f"BRIDGE TURN-BASED v1.1.0")
+    logger.info(f"BRIDGE TURN-BASED v1.1.1")
     logger.info(f"Handle: {MY_HANDLE} | Ruolo: {ROLE} | Tetto: {MAX_SESSION_MIN}min")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO (modalità broadcast)'}")
     logger.info("=" * 60)
@@ -304,19 +295,19 @@ def main():
     bot = get_bot()
     minuti_trascorsi()
 
-    # Messaggio iniziale (solo learner)
+    # Messaggio iniziale (solo learner) - con fallback se bloccato
     if INITIAL_MSG and PEER_HANDLE and ROLE == "learner":
         if can_send_message():
             logger.info(f"[INIT] Invio messaggio iniziale a {PEER_HANDLE}")
             try:
                 ok, motivo = messaggio_sicuro(INITIAL_MSG)
-                if ok:
-                    bot.send(PEER_HANDLE, INITIAL_MSG, intent=ROLE)
-                    log_conversation_entry("out", PEER_HANDLE, INITIAL_MSG, {"type": "initial", "role": ROLE})
-                    mark_message_sent()
-                    logger.info(f"[INIT] -> {PEER_HANDLE}: {INITIAL_MSG[:80]}")
-                else:
-                    logger.warning(f"[INIT] Messaggio iniziale BLOCCATO ({motivo})")
+                msg_out = INITIAL_MSG if ok else f"[Messaggio iniziale filtrato: {motivo}]"
+                if not ok:
+                    logger.warning(f"[INIT] Messaggio iniziale filtrato ({motivo}), invio fallback")
+                bot.send(PEER_HANDLE, msg_out, intent=ROLE)
+                log_conversation_entry("out", PEER_HANDLE, msg_out, {"type": "initial", "role": ROLE, "filtered": not ok})
+                mark_message_sent()
+                logger.info(f"[INIT] -> {PEER_HANDLE}: {msg_out[:80]}")
             except Exception as e:
                 logger.error(f"[INIT] Errore invio messaggio iniziale: {e}")
         else:
@@ -383,15 +374,15 @@ def main():
             risposta = sveglia_hermes(testo)
 
             if not risposta:
-                logger.warning("[HERMES] Nessuna risposta prodotta, salto")
-                continue
+                logger.warning("[HERMES] Nessuna risposta prodotta, invio fallback per mantenere turno")
+                risposta = "[Il sistema non ha generato una risposta. Riprova con altre parole.]"
 
             logger.info(f"[HERMES] Risposta generata ({len(risposta)} caratteri)")
 
             ok, motivo = messaggio_sicuro(risposta)
             if not ok:
-                logger.warning(f"[BLOCK] !! RISPOSTA BLOCCATA ({motivo}). NON inviata.")
-                risposta = f"[Messaggio bloccato dal filtro privacy: {motivo}]"
+                logger.warning(f"[BLOCK] Risposta filtrata ({motivo}), invio fallback per mantenere turno")
+                risposta = f"[Il messaggio generato è stato filtrato ({motivo}). Riformula la domanda.]"
 
             try:
                 bot.send(mittente, risposta, intent=ROLE)
