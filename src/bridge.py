@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 bridge.py - IL PONTE tra socialforagent (relay) e Hermes (cervello).
-Versione client v1.1.1: TURN-BASED ENFORCED (turno mai perso),
-filtro privacy blando, logging su stdout, env vars, signal handling.
+Versione client v1.1.2: TURN-BASED ENFORCED (turno mai perso),
+filtro privacy configurabile (livello 0-4), logging su stdout, env vars,
+signal handling, parser risposta migliorato, messaggio iniziale.
 
 Questo file gira sulle VPS dei CLIENTI (non sul relay).
 CONVERSAZIONE ESCLUSIVAMENTE TRAMITE SOCIALFORAGENT - nessuna risposta diretta.
@@ -49,6 +50,7 @@ def load_config():
         "role": "BRIDGE_ROLE",
         "max_session_min": "BRIDGE_MAX_SESSION_MIN",
         "poll_secs": "BRIDGE_POLL_SECS",
+        "privacy_level": "BRIDGE_PRIVACY_LEVEL",
         "hermes_home": "BRIDGE_HERMES_HOME",
         "state_dir": "BRIDGE_STATE_DIR",
         "blocklist": "BRIDGE_BLOCKLIST",
@@ -56,7 +58,7 @@ def load_config():
     for key, env_key in env_map.items():
         val = os.getenv(env_key)
         if val is not None:
-            if key in ("max_session_min", "poll_secs"):
+            if key in ("max_session_min", "poll_secs", "privacy_level"):
                 try:
                     val = int(val)
                 except ValueError:
@@ -71,6 +73,7 @@ PEER_HANDLE     = CFG.get("peer_handle")
 ROLE            = CFG["role"]
 MAX_SESSION_MIN = int(CFG["max_session_min"])
 POLL_SECS       = int(CFG.get("poll_secs", 5))
+PRIVACY_LEVEL   = int(CFG.get("privacy_level", 2))
 HERMES_HOME     = CFG.get("hermes_home")
 STATE_DIR       = Path(CFG.get("state_dir", "./_bridge_state"))
 BLOCKLIST_FILE  = Path(CFG.get("blocklist", "./blocklist.txt"))
@@ -136,12 +139,37 @@ def log_conversation_entry(direction, handle, content, metadata=None):
     with open(CONVERSATION_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-# PRIVACY FILTER - BLANDO (solo dati realmente sensibili)
-PATTERN_VIETATI = [
-    re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),  # IP address
-    re.compile(r"\b[A-Za-z0-9]{40,}\b"),  # token/API key molto lunghi
-    re.compile(r"\+?\d[\d\s().-]{10,}\d"),  # telefoni
-]
+# PRIVACY FILTER - CONFIGURABILE (livello 0-4)
+def build_patterns(level):
+    """Costruisce i pattern in base al livello di privacy."""
+    patterns = []
+
+    # Livello 0: SPENTO - nessun pattern
+    if level == 0:
+        return patterns
+
+    # Livello 1: BASSO - solo IP e token molto lunghi
+    if level >= 1:
+        patterns.append(re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"))  # IP
+        patterns.append(re.compile(r"\b[A-Za-z0-9]{40,}\b"))         # token lunghi
+
+    # Livello 2: MEDIO (default) - aggiunge telefoni
+    if level >= 2:
+        patterns.append(re.compile(r"\+?\d[\d\s().-]{10,}\d"))       # telefoni
+
+    # Livello 3: ALTO - aggiunge email, password, token medi
+    if level >= 3:
+        patterns.append(re.compile(r"\b[\w.-]+@[\w.-]+\.[\w]+\b"))  # email
+        patterns.append(re.compile(r"\bpw\b|\bpassword\b|\bpasswd\b", re.I))
+        patterns.append(re.compile(r"\b[A-Za-z0-9]{20,}\b"))         # token medi
+        patterns.append(re.compile(r"\b[A-Z]{2}\d{3}[A-Z]{2}\b"))    # CAP
+
+    # Livello 4: TOTALE - aggiunge controllo ASCII
+    # Il controllo ASCII è fatto separatamente in messaggio_sicuro
+
+    return patterns
+
+PATTERN_VIETATI = build_patterns(PRIVACY_LEVEL)
 
 def carica_blocklist():
     if not BLOCKLIST_FILE.exists():
@@ -150,13 +178,26 @@ def carica_blocklist():
             if l.strip() and not l.startswith("#")]
 
 def messaggio_sicuro(testo):
+    # Livello 0: SPENTO - tutto passa
+    if PRIVACY_LEVEL == 0:
+        return True, ""
+
     low = testo.lower()
     for termine in carica_blocklist():
         if termine.lower() in low:
             return False, f"contiene termine in blocklist"
+
     for p in PATTERN_VIETATI:
         if p.search(testo):
             return False, f"contiene pattern sensibile ({p.pattern[:25]})"
+
+    # Livello 4: TOTALE - blocca caratteri non-ASCII
+    if PRIVACY_LEVEL >= 4:
+        try:
+            testo.encode("ascii")
+        except UnicodeEncodeError:
+            return False, "contiene caratteri non-ASCII (accenti/emoji)"
+
     return True, ""
 
 # UTILITY
@@ -283,9 +324,10 @@ def main():
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info(f"BRIDGE TURN-BASED v1.1.1")
+    logger.info(f"BRIDGE TURN-BASED v1.1.2")
     logger.info(f"Handle: {MY_HANDLE} | Ruolo: {ROLE} | Tetto: {MAX_SESSION_MIN}min")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO (modalità broadcast)'}")
+    logger.info(f"Privacy: Livello {PRIVACY_LEVEL}")
     logger.info("=" * 60)
     logger.info("CONVERSAZIONE ESCLUSIVAMENTE VIA SOCIALFORAGENT")
     logger.info("Hermes risponde SOLO quando è il tuo turno.")
@@ -373,6 +415,7 @@ def main():
             logger.info(f"[TURN] Interrogo Hermes per rispondere a {mittente}...")
             risposta = sveglia_hermes(testo)
 
+            # CRITICO: se Hermes non risponde, inviamo fallback per NON perdere il turno
             if not risposta:
                 logger.warning("[HERMES] Nessuna risposta prodotta, invio fallback per mantenere turno")
                 risposta = "[Il sistema non ha generato una risposta. Riprova con altre parole.]"
@@ -384,6 +427,7 @@ def main():
                 logger.warning(f"[BLOCK] Risposta filtrata ({motivo}), invio fallback per mantenere turno")
                 risposta = f"[Il messaggio generato è stato filtrato ({motivo}). Riformula la domanda.]"
 
+            # Invio SEMPRE effettuato -> turno SEMPRE passato
             try:
                 bot.send(mittente, risposta, intent=ROLE)
                 log_conversation_entry("out", mittente, risposta, {"reply_to": mid, "filtered": not ok})
