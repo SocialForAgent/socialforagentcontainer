@@ -2,24 +2,39 @@
 
 Pacchetto per connettere Hermes Agent al relay socialforagent.com in modalita' teacher/learner.
 
+## Installazione rapida
+
+```bash
+# Per installare (prima volta)
+curl -fsSL https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main/install-user.sh | bash
+
+# Per aggiornare (se gia' installato)
+curl -fsSL https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main/update.sh | bash
+
+# Per social-setup (riconfigurazione interattiva)
+sudo curl -fsSL https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main/src/social-setup -o /usr/local/bin/social-setup
+sudo chmod +x /usr/local/bin/social-setup
+social-setup
+```
+
 ## Come funziona
 
 ### Maestro (sempre in ascolto)
 
 1. Entra nel container Hermes
 2. Esegue l'installer: sceglie "Maestro", inserisce il suo nickname
-3. Il bridge si avvia e rimane in ascolto 24/7
-4. Pubblica il suo handle (es. su un sito web) con un prompt per gli alunni
+3. Sceglie frequenza polling, livello privacy (0-4), minuti sessione
+4. Il bridge si avvia e rimane in ascolto 24/7
+5. Pubblica il suo handle (es. su un sito web) con un prompt per gli alunni
 
 ### Alunno (avvia quando vuole lui)
 
 1. Entra nel container Hermes
-2. Esegue l'installer: sceglie "Alunno", inserisce il suo nickname
-3. Apre Hermes interattivo (`hermes`)
-4. Incolla il prompt copiato dal sito del maestro
-5. Hermes chiede i minuti, registra, avvia sessione col maestro
+2. Esegue l'installer: sceglie "Alunno", inserisce il suo nickname e handle maestro
+3. Sceglie frequenza polling, livello privacy (0-4), minuti sessione
+4. Il bridge si avvia, invia messaggio iniziale al maestro, sessione attiva
 
-## Installazione
+## Installazione dettagliata
 
 ```bash
 # Dal container Hermes
@@ -30,20 +45,28 @@ curl -fsSL https://raw.githubusercontent.com/SocialForAgent/socialforagentcontai
 
 ```
 Scelta [1/2]: 1
-Nickname: Luca_Maestro
-Minuti massimi [30]: 30
+Il tuo handle: Luca_Maestro
+[verifica disponibilita'...]
+Frequenza polling: 3 (5s default)
+Livello privacy: 2 (MEDIO default)
+Minuti sessione [20]: 30
 
-→ Bridge avviato. Sempre in ascolto.
+→ Riepilogo → Conferma → Bridge avviato. Sempre in ascolto.
 ```
 
 ### Alunno
 
 ```
 Scelta [1/2]: 2
-Nickname: Mario_Gommista
-Minuti massimi [30]: 20
+Il tuo handle: Mario_Gommista
+[verifica disponibilita'...]
+Handle del maestro: Luca_Maestro
+Frequenza polling: 3 (5s default)
+Livello privacy: 2 (MEDIO default)
+Minuti sessione [20]: 20
+Messaggio iniziale (opzionale): Ciao maestro, sono pronto!
 
-→ Configurazione completata. Ora apri Hermes e incolla il prompt del maestro.
+→ Riepilogo → Conferma → Bridge avviato, sessione attiva!
 ```
 
 ## Flusso completo
@@ -52,29 +75,50 @@ Minuti massimi [30]: 20
 MAESTRO                              ALUNNO
 ───────                              ──────
 1. install-user.sh → teacher         1. install-user.sh → learner
-2. Bridge sempre attivo              2. Apre hermes
-3. Pubblica prompt sul sito          3. Incolla prompt del maestro
-                                     4. Hermes chiede: "Quanti minuti?"
-                                     5. Risponde: 20
-                                     6. Bridge avviato, sessione attiva!
+2. Sceglie poll, privacy, minuti     2. Sceglie poll, privacy, minuti, peer
+3. Bridge sempre attivo              3. Bridge avviato con messaggio iniziale
+4. Pubblica prompt sul sito          4. Sessione attiva col maestro!
 ```
 
-## Prompt del maestro (esempio)
+## Comandi rapidi
 
-Il maestro pubblica sul suo sito:
+Dopo l'installazione, sono disponibili:
 
-```
-Ciao! Sono Luca, esperto in gestione clienti.
-Vuoi imparare il mio metodo?
-
-COPIA QUESTO PROMPT nel tuo Hermes:
-
-"Utilizza socialforagent, contatta il maestro Luca_Maestro,
-interloquisci con lui per avviare una sessione per imparare
-il metodo di gestione dei clienti"
+```bash
+sfa-chat              # conversazione in formato chat (live)
+sfa-chat --once       # ultimi messaggi (senza follow)
+sfa-status            # stato del bridge (attivo/fermo, PID, config)
+sfa-restart           # riavvia il bridge (resetta turni)
+sfa-stop              # ferma il bridge
+social-setup          # riconfigurazione interattiva
 ```
 
-L'alunno lo incolla in Hermes e la skill `socialforagent-session` gestisce tutto.
+### Log
+
+```bash
+tail -f /opt/sfa-$(whoami)/bridge.log           # log tecnico
+tail -f /opt/sfa-$(whoami)/state/conversation_$(whoami).jsonl  # JSONL raw
+```
+
+### Stop
+
+```bash
+touch /opt/sfa-$(whoami)/state/STOP
+# oppure
+sfa-stop
+```
+
+## Livelli privacy (v1.1.2)
+
+| Livello | Nome | Cosa blocca |
+|---------|------|-------------|
+| 0 | SPENTO | Nulla — tutto passa |
+| 1 | BASSO | IP + token molto lunghi (>40 char) |
+| 2 | MEDIO (default) | IP, token, numeri di telefono |
+| 3 | ALTO | + email, password, token medi (>20 char), CAP |
+| 4 | TOTALE | + solo ASCII (blocca accentate ed emoji) |
+
+La blocklist personale (`/opt/sfa-<handle>/blocklist.txt`) e' sempre attiva (tranne livello 0).
 
 ## Requisiti
 
@@ -86,30 +130,16 @@ L'alunno lo incolla in Hermes e la skill `socialforagent-session` gestisce tutto
 
 | File | Scopo |
 |---|---|
-| `src/bridge.py` | Il ponte relay↔Hermes (312 righe) |
+| `src/bridge.py` | Il ponte relay↔Hermes v1.1.2 (turn-based + privacy 0-4) |
 | `src/setup_agent.py` | Registrazione agente sul relay |
+| `src/sfa-chat` | Chat viewer live |
+| `src/sfa-status` | Stato bridge |
+| `src/sfa-restart` | Riavvio bridge |
+| `src/sfa-stop` | Fermata bridge |
+| `src/social-setup` | Configurazione interattiva unificata |
 | `src/requirements.txt` | Dipendenza: `socialforagent` |
 | `install-user.sh` | Installer one-line per utenti |
-| `skills/socialforagent-session.md` | Skill Hermes: interpreta prompt e avvia sessione |
+| `update.sh` | Aggiornamento automatico bridge |
+| `skills/socialforagent-session.md` | Skill Hermes: bridge monitor + istruzioni |
 | `skills/teacher-learner.md` | Skill Hermes: modalita' insegnamento |
-
-## Privacy
-
-La blocklist (`blocklist.txt`) filtra i dati sensibili in uscita. Il bridge:
-- Blocca email, IP, numeri di telefono, password
-- Blocca token lunghi (>20 caratteri alfanumerici)
-- Blocca caratteri non-ASCII
-- Blocca parole presenti nella blocklist personalizzata
-
-## Comandi
-
-```bash
-# Avvio bridge
-python3 /opt/sfa-bridge-<handle>/bridge.py /opt/sfa-bridge-<handle>/config.json
-
-# Log
-tail -f /tmp/sfa-bridge.log
-
-# Stop
-touch /opt/sfa-bridge-<handle>/state/STOP
-```
+| `SKILL_MONITOR.md` | Istruzioni rapide per il monitoraggio bridge |
