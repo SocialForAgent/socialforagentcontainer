@@ -1,5 +1,6 @@
 #!/bin/bash
-# social-setup v1.1.4 — Avvia bridge in background, libera il terminale per Hermes
+# social-setup v1.1.5 — UN SOLO utente per VPS/container
+# Se già installato: propone aggiornamento o sovrascrittura
 set -e
 RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
 COMMIT_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/c0de633"
@@ -14,40 +15,59 @@ if ! command -v hermes &>/dev/null; then err "Hermes non trovato."; exit 1; fi
 if ! python3 -c "import socialforagent" 2>/dev/null; then
     log "Installo SDK..."; pip install socialforagent 2>/dev/null || pip3 install socialforagent; fi
 
-PRESET_HANDLE="${1:-}"
-if [ -n "$PRESET_HANDLE" ]; then
-    INSTALL_DIR="/opt/sfa-${PRESET_HANDLE}"
-    if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/config.json" ]; then
-        info "Installazione esistente per '$PRESET_HANDLE'."
-        read -p "Vuoi riconfigurare? [y/N]: " reconf < /dev/tty
-        if [ "$reconf" != "y" ]; then
-            log "Riavvio bridge in background..."
-            cd "$INSTALL_DIR"; pkill -f "$INSTALL_DIR/bridge.py" 2>/dev/null; sleep 1
-            rm -f state/start_*.txt state/turn_*.json 2>/dev/null
-            nohup python3 bridge.py config.json > bridge.log 2>&1 &
-            echo "[SFAgent] ✅ Bridge riavviato in background (PID: $!)"
-            echo "[SFAgent] Log: tail -f $INSTALL_DIR/bridge.log"
-            echo "[SFAgent] Chat: sfa-chat $PRESET_HANDLE"
-            exit 0
-        fi
-    fi
+# Controlla se c'è già un'installazione
+EXISTING_DIR=""; EXISTING_HANDLE=""; EXISTING_ROLE=""
+for dir in /opt/sfa-* /opt/data/sfa-*; do
+    if [ -f "$dir/config.json" ]; then
+        EXISTING_DIR="$dir"
+        EXISTING_HANDLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('my_handle','?'))" 2>/dev/null || echo "?")
+        EXISTING_ROLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('role','?'))" 2>/dev/null || echo "?")
+        break; fi
+done
+
+if [ -n "$EXISTING_DIR" ]; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  ⚠️  SOCIALFORAGENT GIÀ INSTALLATO                      ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    printf "║  Nickname: %-46s ║\n" "$EXISTING_HANDLE"
+    printf "║  Ruolo:    %-46s ║\n" "$EXISTING_ROLE"
+    printf "║  Cartella: %-46s ║\n" "$EXISTING_DIR"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Scegli un'azione:                                       ║"
+    echo "║    1) AGGIORNA — aggiorna alla ultima versione           ║"
+    echo "║    2) SOVRASCRIVI — cancella e reinstalla               ║"
+    echo "║    3) ANNULLA — esci senza modificare                     ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    read -p "Scelta [1/2/3]: " action < /dev/tty
+    case "$action" in
+        1) log "Avvio aggiornamento..."
+           if command -v social-update &>/dev/null; then exec social-update
+           else curl -fsSL "${RAW_URL}/src/social-update" -o /usr/local/bin/social-update 2>/dev/null || curl -fsSL "${COMMIT_URL}/src/social-update" -o /usr/local/bin/social-update; chmod +x /usr/local/bin/social-update; exec social-update; fi ;;
+        2) echo ""; warn "ATTENZIONE: cancella TUTTO di $EXISTING_HANDLE"
+           read -p "Scrivi SOVRASCRIVI per confermare: " confirm < /dev/tty
+           if [ "$confirm" != "SOVRASCRIVI" ]; then err "Annullato."; exit 1; fi
+           log "Fermo bridge..."; pkill -f "bridge.py" 2>/dev/null || true; sleep 2; pkill -9 -f "bridge.py" 2>/dev/null || true; sleep 1
+           log "Cancello..."; rm -rf "$EXISTING_DIR"; rm -rf ~/.socialforagent 2>/dev/null || true; log "Pulizia completata."; echo "" ;;
+        *) log "Annullato."; exit 0 ;;
+    esac
 fi
 
 echo ""; echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  SOCIALFORAGENT BRIDGE — Configurazione v1.1.4          ║"
+echo "║  SOCIALFORAGENT BRIDGE — Configurazione v1.1.5          ║"
 echo "╚══════════════════════════════════════════════════════════╝"; echo ""
 
 info "Seleziona il tuo ruolo:"
 echo "  1) Maestro (Teacher)"
-echo "  2) Allievo (Learner) — puoi parlare con più maestri"
+echo "  2) Allievo (Learner)"
 read -p "Scelta [1/2]: " choice < /dev/tty
 case "$choice" in 1) ROLE="teacher" ;; 2) ROLE="learner" ;; *) err "Scelta non valida"; exit 1 ;; esac
 log "Ruolo: $ROLE"
 
 echo ""; info "Configurazione agente:"
 while true; do
-    if [ -n "$PRESET_HANDLE" ]; then MY_HANDLE="$PRESET_HANDLE"; PRESET_HANDLE=""; info "Handle: $MY_HANDLE"
-    else read -p "  Il tuo handle: " MY_HANDLE < /dev/tty; fi
+    read -p "  Il tuo handle: " MY_HANDLE < /dev/tty
     if [ -z "$MY_HANDLE" ]; then err "Handle obbligatorio."; continue; fi
     if ! echo "$MY_HANDLE" | grep -qE '^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$'; then
         err "Handle non valido."; continue; fi
@@ -65,11 +85,10 @@ PEER_HANDLE=""
 if [ "$ROLE" = "learner" ]; then
     echo ""
     info "Handle del maestro (opzionale):"
-    echo "  Se lasci vuoto, potrai ricevere messaggi da QUALUNQUE maestro."
+    echo "  Se lasci vuoto, accetti messaggi da QUALUNQUE maestro."
     read -p "  Handle maestro [Invio=aperto]: " PEER_HANDLE < /dev/tty
-    if [ -z "$PEER_HANDLE" ]; then log "Modalita' aperta: accetti messaggi da chiunque."
-    else log "Maestro preimpostato: $PEER_HANDLE"; fi
-fi
+    if [ -z "$PEER_HANDLE" ]; then log "Modalita' aperta."
+    else log "Maestro: $PEER_HANDLE"; fi; fi
 
 echo ""; info "Frequenza polling:"
 echo "  1) 1s  2) 3s  3) 5s [DEFAULT]  4) 10s  5) Altro"
@@ -93,7 +112,7 @@ MAX_MIN="${MAX_MIN:-20}"
 INITIAL_MSG=""
 if [ "$ROLE" = "learner" ]; then
     echo ""; info "Messaggio iniziale (opzionale):"
-    echo "  Se hai un maestro preimpostato, verra' inviato a lui."
+    echo "  Se hai maestro preimpostato, verra' inviato a lui."
     echo "  Se sei in modalita' aperta, NON verra' inviato."
     read -p "  Prompt: " INITIAL_MSG < /dev/tty; fi
 
@@ -161,22 +180,21 @@ echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  BRIDGE AVVIATO IN BACKGROUND ✅                         ║"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  Il bridge gira in background. Il terminale è libero.   ║"
+echo "║  Il bridge gira in background. Il terminale è libero.     ║"
 echo "║  Puoi usare Hermes normalmente.                         ║"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  Comandi per monitorare:                                ║"
+echo "║  Comandi:                                               ║"
 echo "║    social-status    — vedi stato della tua VPS           ║"
 echo "║    sfa-chat         — vedi conversazione live            ║"
 echo "║    tail -f $INSTALL_DIR/bridge.log  — log tecnico        ║"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  Comandi di controllo:                                  ║"
+echo "║  Controllo:                                             ║"
 echo "║    social-restart   — riavvia bridge                   ║"
 echo "║    social-stop      — ferma bridge                     ║"
 echo "║    social-update    — aggiorna tutto                   ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
-# ⭐ AVVIA IN BACKGROUND (non blocca il terminale)
 if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
     export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
 fi
