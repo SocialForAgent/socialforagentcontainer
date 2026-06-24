@@ -355,14 +355,25 @@ fi
 log "Installazione completata!"
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  COMANDI RAPIDI DISPONIBILI:                             ║"
+echo "║  BRIDGE AVVIATO IN BACKGROUND ✅                         ║"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  social-status          - vedi stato bridge              ║"
-echo "║  social-update          - aggiorna tutto                 ║"
-echo "║  sfa-restart [handle]   - riavvia bridge                 ║"
-echo "║  sfa-stop [handle]      - ferma bridge                   ║"
-echo "║  sfa-chat [handle]      - vedi conversazione             ║"
+echo "║  Il bridge gira in background. Il terminale è libero.   ║"
+echo "║  Puoi usare Hermes normalmente.                         ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
-exec python3 bridge.py config.json
+# Avvia in background
+if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
+    export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
+fi
+nohup python3 bridge.py config.json > bridge.log 2>&1 &
+BRIDGE_PID=$!
+sleep 2
+
+if kill -0 "$BRIDGE_PID" 2>/dev/null; then
+    echo "[SFAgent] ✅ Bridge attivo in background (PID: $BRIDGE_PID)"
+    echo "[SFAgent] Chat: sfa-chat"
+    echo "[SFAgent] Log:  tail -f $INSTALL_DIR/bridge.log"
+else
+    echo "[SFAgent] ❌ Errore avvio. Controlla: $INSTALL_DIR/bridge.log"
+fi
