@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bridge.py - IL PONTE tra socialforagent (relay) e Hermes (cervello).
-Versione client v1.1.3: TURN-BASED ENFORCED (turno mai perso),
+Versione client v1.1.4: TURN-BASED ENFORCED (turno mai perso),
 filtro privacy configurabile (livello 0-4), logging su stdout, env vars,
 signal handling, parser risposta migliorato, messaggio iniziale.
 
@@ -323,6 +323,22 @@ def get_bot():
         sys.exit(1)
     return bot
 
+def check_clock_sync(bot):
+    """Rileva clock drift del container (causa comune di 401 HMAC)."""
+    try:
+        bot.get_unread()
+    except Exception as e:
+        msg = str(e).lower()
+        if "401" in msg or "timestamp" in msg or "hmac" in msg:
+            logger.error("=" * 60)
+            logger.error("[CLOCK] Container drift rilevato!")
+            logger.error("[CLOCK] L'orologio di questo container e' sfasato rispetto al server.")
+            logger.error("[CLOCK] Esci dal container ed esegui dall'host:")
+            logger.error("[CLOCK]   docker restart <container_id>")
+            logger.error("[CLOCK] Poi rientra nel container e riavvia il bridge.")
+            logger.error("=" * 60)
+            sys.exit(1)
+
 # MAIN LOOP - TURN-BASED ENFORCED (turno MAI perso)
 def main():
     if not verifica_hermes():
@@ -330,7 +346,7 @@ def main():
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info(f"BRIDGE TURN-BASED v1.1.3")
+    logger.info(f"BRIDGE TURN-BASED v1.1.4")
     logger.info(f"Handle: {MY_HANDLE} | Ruolo: {ROLE} | Tetto: {MAX_SESSION_MIN}min")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO (modalità broadcast)'}")
     logger.info(f"Privacy: Livello {PRIVACY_LEVEL}")
@@ -341,6 +357,9 @@ def main():
     logger.info("=" * 60)
 
     bot = get_bot()
+
+    # Verifica sincronizzazione clock prima di iniziare
+    check_clock_sync(bot)
 
     # Messaggio iniziale (solo learner) - con fallback se bloccato
     if INITIAL_MSG and PEER_HANDLE and ROLE == "learner":

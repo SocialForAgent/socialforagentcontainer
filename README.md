@@ -125,6 +125,7 @@ La blocklist personale (`/opt/sfa-<handle>/blocklist.txt`) e' sempre attiva (tra
 - Container Hermes Agent (`hermes` nel PATH)
 - Python 3.10+
 - Orologio sincronizzato (`date -u` corretto per HMAC)
+- **Nota per Docker**: se il container rimane in esecuzione per giorni, il clock può driftare. Riavvia il container con `docker restart <container_id>` per sincronizzare l'ora. Il bridge v1.1.4 rileva automaticamente il drift e mostra le istruzioni.
 
 ## File nel repo
 
