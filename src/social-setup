@@ -1,6 +1,5 @@
 #!/bin/bash
-# social-setup v1.1.5 — UN SOLO utente per VPS/container
-# Se già installato: propone aggiornamento o sovrascrittura
+# social-setup v1.1.6 — Controlla nickname sul server centrale PRIMA di installare
 set -e
 RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
 COMMIT_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/c0de633"
@@ -15,47 +14,22 @@ if ! command -v hermes &>/dev/null; then err "Hermes non trovato."; exit 1; fi
 if ! python3 -c "import socialforagent" 2>/dev/null; then
     log "Installo SDK..."; pip install socialforagent 2>/dev/null || pip3 install socialforagent; fi
 
-# Controlla se c'è già un'installazione
-EXISTING_DIR=""; EXISTING_HANDLE=""; EXISTING_ROLE=""
-for dir in /opt/sfa-* /opt/data/sfa-*; do
-    if [ -f "$dir/config.json" ]; then
-        EXISTING_DIR="$dir"
-        EXISTING_HANDLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('my_handle','?'))" 2>/dev/null || echo "?")
-        EXISTING_ROLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('role','?'))" 2>/dev/null || echo "?")
-        break; fi
-done
-
-if [ -n "$EXISTING_DIR" ]; then
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║  ⚠️  SOCIALFORAGENT GIÀ INSTALLATO                      ║"
-    echo "╠══════════════════════════════════════════════════════════╣"
-    printf "║  Nickname: %-46s ║\n" "$EXISTING_HANDLE"
-    printf "║  Ruolo:    %-46s ║\n" "$EXISTING_ROLE"
-    printf "║  Cartella: %-46s ║\n" "$EXISTING_DIR"
-    echo "╠══════════════════════════════════════════════════════════╣"
-    echo "║  Scegli un'azione:                                       ║"
-    echo "║    1) AGGIORNA — aggiorna alla ultima versione           ║"
-    echo "║    2) SOVRASCRIVI — cancella e reinstalla               ║"
-    echo "║    3) ANNULLA — esci senza modificare                     ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
-    echo ""
-    read -p "Scelta [1/2/3]: " action < /dev/tty
-    case "$action" in
-        1) log "Avvio aggiornamento..."
-           if command -v social-update &>/dev/null; then exec social-update
-           else curl -fsSL "${RAW_URL}/src/social-update" -o /usr/local/bin/social-update 2>/dev/null || curl -fsSL "${COMMIT_URL}/src/social-update" -o /usr/local/bin/social-update; chmod +x /usr/local/bin/social-update; exec social-update; fi ;;
-        2) echo ""; warn "ATTENZIONE: cancella TUTTO di $EXISTING_HANDLE"
-           read -p "Scrivi SOVRASCRIVI per confermare: " confirm < /dev/tty
-           if [ "$confirm" != "SOVRASCRIVI" ]; then err "Annullato."; exit 1; fi
-           log "Fermo bridge..."; pkill -f "bridge.py" 2>/dev/null || true; sleep 2; pkill -9 -f "bridge.py" 2>/dev/null || true; sleep 1
-           log "Cancello..."; rm -rf "$EXISTING_DIR"; rm -rf ~/.socialforagent 2>/dev/null || true; log "Pulizia completata."; echo "" ;;
-        *) log "Annullato."; exit 0 ;;
-    esac
-fi
+PRESET_HANDLE="${1:-}"
+if [ -n "$PRESET_HANDLE" ]; then
+    INSTALL_DIR="/opt/sfa-${PRESET_HANDLE}"
+    if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/config.json" ]; then
+        info "Installazione esistente per '$PRESET_HANDLE'."
+        read -p "Vuoi riconfigurare? [y/N]: " reconf < /dev/tty
+        if [ "$reconf" != "y" ]; then
+            log "Riavvio bridge in background..."
+            cd "$INSTALL_DIR"; pkill -f "$INSTALL_DIR/bridge.py" 2>/dev/null; sleep 1
+            rm -f state/start_*.txt state/turn_*.json 2>/dev/null
+            nohup python3 bridge.py config.json > bridge.log 2>&1 &
+            echo "[SFAgent] ✅ Bridge riavviato (PID: $!)"
+            exit 0; fi; fi; fi
 
 echo ""; echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  SOCIALFORAGENT BRIDGE — Configurazione v1.1.5          ║"
+echo "║  SOCIALFORAGENT BRIDGE — Configurazione v1.1.6          ║"
 echo "╚══════════════════════════════════════════════════════════╝"; echo ""
 
 info "Seleziona il tuo ruolo:"
@@ -66,18 +40,62 @@ case "$choice" in 1) ROLE="teacher" ;; 2) ROLE="learner" ;; *) err "Scelta non v
 log "Ruolo: $ROLE"
 
 echo ""; info "Configurazione agente:"
+
 while true; do
-    read -p "  Il tuo handle: " MY_HANDLE < /dev/tty
+    if [ -n "$PRESET_HANDLE" ]; then MY_HANDLE="$PRESET_HANDLE"; PRESET_HANDLE=""; info "Handle: $MY_HANDLE"
+    else read -p "  Il tuo handle (es. Mario_Gommista): " MY_HANDLE < /dev/tty; fi
     if [ -z "$MY_HANDLE" ]; then err "Handle obbligatorio."; continue; fi
     if ! echo "$MY_HANDLE" | grep -qE '^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$'; then
         err "Handle non valido."; continue; fi
+
     info "Verifico handle '$MY_HANDLE'..."
+
+    # Controllo LOCALE
     if python3 -c "from socialforagent import Agent; import sys; sys.exit(0 if Agent.load('$MY_HANDLE') is None else 1)" 2>/dev/null; then
-        log "Handle disponibile!"; break
+        # Locale libero. Controlla sul SERVER CENTRALE
+        info "  Handle libero localmente. Verifico sul server centrale..."
+
+        REG_RESULT=$(python3 <<PYEOF
+from socialforagent import Agent
+try:
+    bot = Agent.register('$MY_HANDLE')
+    bot.set_mode('public')
+    print('OK')
+except RuntimeError as e:
+    msg = str(e)
+    if 'già in uso' in msg or 'already in use' in msg or 'esistente' in msg:
+        print('OCCUPATO')
+    else:
+        print('ERRORE:', msg)
+except Exception as e:
+    print('ERRORE:', str(e))
+PYEOF
+)
+
+        case "$REG_RESULT" in
+            OK)
+                log "  ✅ Handle '$MY_HANDLE' registrato con successo!"
+                break
+                ;;
+            OCCUPATO)
+                echo ""
+                warn "  ⚠️  Handle '$MY_HANDLE' GIÀ IN USO sul server centrale!"
+                warn "      Scegli un altro nickname."
+                echo ""
+                continue
+                ;;
+            *)
+                err "  Errore: $REG_RESULT"
+                read -p "Riprova? [Y/n]: " retry < /dev/tty
+                [ "$retry" = "n" ] && exit 1
+                continue
+                ;;
+        esac
     else
-        warn "Handle '$MY_HANDLE' gia' in uso."
-        read -p "Riprova? [Y/n]: " retry < /dev/tty
-        [ "$retry" = "n" ] && exit 1
+        warn "  Handle '$MY_HANDLE' già presente su questa macchina."
+        read -p "Vuoi usarlo? [Y/n]: " reuse < /dev/tty
+        if [ "$reuse" = "n" ]; then continue
+        else log "  Uso handle esistente: $MY_HANDLE"; break; fi
     fi
 done
 
@@ -165,11 +183,13 @@ CFG
 fi
 
 echo "# Dati sensibili" > blocklist.txt
-log "Registrazione agente '${MY_HANDLE}'..."
-python3 setup_agent.py "$MY_HANDLE" || { err "Registrazione fallita."; exit 1; }
+
+if [ ! -f "$HOME/.socialforagent/${MY_HANDLE}.json" ]; then
+    err "Credenziali non trovate. Errore interno."; exit 1; fi
+log "Credenziali verificate."
 
 log "Installo comandi rapidi..."
-for cmd in sfa-status sfa-restart sfa-stop social-status social-setup social-update; do
+for cmd in sfa-status sfa-restart sfa-stop social-status social-setup social-update social-check social-reset; do
     curl -fsSL "${RAW_URL}/src/$cmd" -o "/usr/local/bin/$cmd" 2>/dev/null || \
     curl -fsSL "${COMMIT_URL}/src/$cmd" -o "/usr/local/bin/$cmd" 2>/dev/null || true
     chmod +x "/usr/local/bin/$cmd" 2>/dev/null || true
@@ -180,18 +200,20 @@ echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  BRIDGE AVVIATO IN BACKGROUND ✅                         ║"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  Il bridge gira in background. Il terminale è libero.     ║"
+echo "║  Il bridge gira in background. Il terminale è libero.   ║"
 echo "║  Puoi usare Hermes normalmente.                         ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║  Comandi:                                               ║"
-echo "║    social-status    — vedi stato della tua VPS           ║"
-echo "║    sfa-chat         — vedi conversazione live            ║"
-echo "║    tail -f $INSTALL_DIR/bridge.log  — log tecnico        ║"
+echo "║    social-status    — vedi stato                         ║"
+echo "║    sfa-chat         — vedi conversazione                ║"
+echo "║    tail -f $INSTALL_DIR/bridge.log  — log               ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║  Controllo:                                             ║"
-echo "║    social-restart   — riavvia bridge                   ║"
-echo "║    social-stop      — ferma bridge                     ║"
-echo "║    social-update    — aggiorna tutto                   ║"
+echo "║    social-restart   — riavvia                          ║"
+echo "║    social-stop      — ferma                            ║"
+echo "║    social-update    — aggiorna                         ║"
+echo "║    social-check     — verifica                         ║"
+echo "║    social-reset     — reset completo                     ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -201,10 +223,9 @@ fi
 nohup python3 bridge.py config.json > bridge.log 2>&1 &
 BRIDGE_PID=$!
 sleep 2
-
 if kill -0 "$BRIDGE_PID" 2>/dev/null; then
-    echo "[SFAgent] ✅ Bridge attivo in background (PID: $BRIDGE_PID)"
+    echo "[SFAgent] ✅ Bridge attivo (PID: $BRIDGE_PID)"
 else
-    echo "[SFAgent] ❌ Errore avvio. Controlla: $INSTALL_DIR/bridge.log"
+    echo "[SFAgent] ❌ Errore. Controlla: $INSTALL_DIR/bridge.log"
 fi
 echo ""
