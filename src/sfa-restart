@@ -1,55 +1,12 @@
 #!/bin/bash
-# social-restart v2.1 — Riavvia bridge SocialForAgent
-# Fix: ferma correttamente anche bridge avviati con path relativo
-set -e
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-log()  { echo -e "${GREEN}[RESTART]${NC} $1"; }
-warn() { echo -e "${YELLOW}[RESTART]${NC} $1"; }
-err()  { echo -e "${RED}[RESTART]${NC} $1"; }
-info() { echo -e "${BLUE}[RESTART]${NC} $1"; }
-
-HANDLE="${1:-$(whoami)}"
-SFA_DIR="/opt/sfa-${HANDLE}"
+# sfa-restart v2.2 — Riavvia bridge con rilevamento venv Hermes
+if [ -x "/opt/hermes/.venv/bin/python3" ]; then PYTHON3="/opt/hermes/.venv/bin/python3"; else PYTHON3="python3"; fi
+HANDLE="${1:-$(whoami)}"; SFA_DIR="/opt/sfa-${HANDLE}"
 if [ ! -f "$SFA_DIR/config.json" ]; then SFA_DIR="/opt/data/sfa-${HANDLE}"; fi
-
-if [ ! -f "$SFA_DIR/config.json" ]; then
-    err "ERRORE: nessuna installazione trovata per '$HANDLE'"
-    echo "Installazioni trovate:"
-    for dir in /opt/sfa-* /opt/data/sfa-*; do
-        if [ -f "$dir/config.json" ]; then
-            h=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('my_handle','?'))" 2>/dev/null)
-            echo "  • $h → $dir"; fi; done
-    exit 1; fi
-
-info "Riavvio bridge per '$HANDLE'..."
-info "Cartella: $SFA_DIR"
-
-# ⭐ FIX: cerca PID con metodo corretto
-PID=""
-for pid in $(pgrep -f "python3.*bridge.py" 2>/dev/null); do
-    if [ -d "/proc/$pid" ]; then
-        CWD=$(readlink "/proc/$pid/cwd" 2>/dev/null)
-        if [ "$CWD" = "$SFA_DIR" ]; then PID="$pid"; break; fi
-    fi
-done
-if [ -z "$PID" ]; then PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1); fi
-
-if [ -n "$PID" ]; then
-    info "Fermo bridge (PID: $PID)..."
-    kill "$PID" 2>/dev/null || true; sleep 2
-    if kill -0 "$PID" 2>/dev/null; then warn "Forzo kill..."; kill -9 "$PID" 2>/dev/null || true; sleep 1; fi
-    if kill -0 "$PID" 2>/dev/null; then err "Impossibile fermare il bridge"; exit 1; fi
-    log "✅ Bridge fermato"
-else warn "Nessun bridge attivo trovato"; fi
-
-if [ -d "$SFA_DIR/state" ]; then
-    rm -f "$SFA_DIR/state/start_*.txt" "$SFA_DIR/state/turn_*.json" 2>/dev/null || true
-    log "✅ Stato resettato"; fi
-
-cd "$SFA_DIR"; info "Avvio bridge in background..."
-nohup python3 bridge.py config.json > bridge.log 2>&1 &
-NEWPID=$!; sleep 2
-if kill -0 "$NEWPID" 2>/dev/null; then
-    log "✅ Bridge riavviato (PID: $NEWPID)"
-    echo "  social-status | sfa-chat | tail -f $SFA_DIR/bridge.log"
-else err "❌ Errore. Controlla: $SFA_DIR/bridge.log"; exit 1; fi
+[ ! -f "$SFA_DIR/config.json" ] && echo "[SFAgent] ❌ Nessuna installazione per $HANDLE" && exit 1
+PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1); [ -n "$PID" ] && kill "$PID" 2>/dev/null && sleep 1
+[ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null
+rm -f "$SFA_DIR/state/STOP" "$SFA_DIR/state/start_*.txt" "$SFA_DIR/state/turn_*.json" 2>/dev/null
+export BRIDGE_CONFIG="$SFA_DIR/config.json"
+nohup $PYTHON3 "$SFA_DIR/bridge.py" "$SFA_DIR/config.json" > "$SFA_DIR/bridge.log" 2>&1 &
+sleep 2; kill -0 "$!" 2>/dev/null && echo "[SFAgent] ✅ Bridge riavviato! PID: $!" || echo "[SFAgent] ❌ Errore. Controlla: $SFA_DIR/bridge.log"

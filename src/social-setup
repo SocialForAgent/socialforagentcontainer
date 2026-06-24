@@ -1,6 +1,8 @@
 #!/bin/bash
 # social-setup v1.1.6 — Controlla nickname sul server centrale PRIMA di installare
 set -e
+# Rileva Python del venv Hermes
+if [ -x "/opt/hermes/.venv/bin/python3" ]; then PYTHON3="/opt/hermes/.venv/bin/python3"; else PYTHON3="python3"; fi
 RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
 COMMIT_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/c0de633"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -12,7 +14,7 @@ ask()  { echo -e "${CYAN}[SFAgent]${NC} $1"; }
 
 if ! command -v hermes &>/dev/null; then err "Hermes non trovato."; exit 1; fi
 if ! python3 -c "import socialforagent" 2>/dev/null; then
-    log "Installo SDK..."; pip install socialforagent 2>/dev/null || pip3 install socialforagent; fi
+    log "Installo SDK..."; $PYTHON3 -m pip install socialforagent; fi
 
 PRESET_HANDLE="${1:-}"
 if [ -n "$PRESET_HANDLE" ]; then
@@ -24,7 +26,7 @@ if [ -n "$PRESET_HANDLE" ]; then
             log "Riavvio bridge in background..."
             cd "$INSTALL_DIR"; pkill -f "$INSTALL_DIR/bridge.py" 2>/dev/null; sleep 1
             rm -f state/start_*.txt state/turn_*.json 2>/dev/null
-            nohup python3 bridge.py config.json > bridge.log 2>&1 &
+            nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
             echo "[SFAgent] ✅ Bridge riavviato (PID: $!)"
             exit 0; fi; fi; fi
 
@@ -220,7 +222,7 @@ echo ""
 if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
     export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
 fi
-nohup python3 bridge.py config.json > bridge.log 2>&1 &
+nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
 BRIDGE_PID=$!
 sleep 2
 if kill -0 "$BRIDGE_PID" 2>/dev/null; then

@@ -1,9 +1,12 @@
 #!/bin/bash
-# social-update — Aggiorna TUTTO SocialForAgent alla ultima versione
+# social-update v2.2 — Aggiorna TUTTO SocialForAgent con rilevamento venv Hermes
 # Uso: social-update
 # Aggiorna: bridge.py, social-setup, social-status, sfa-status, sfa-restart, sfa-stop, sfa-chat
 
 set -e
+
+# Rileva Python del venv Hermes
+if [ -x "/opt/hermes/.venv/bin/python3" ]; then PYTHON3="/opt/hermes/.venv/bin/python3"; else PYTHON3="python3"; fi
 
 RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
 # Fallback se main non è ancora aggiornato (cache CDN)
@@ -122,7 +125,7 @@ for dir in $INSTALL_DIRS; do
 
     # Riavvia
     cd "$dir"
-    nohup python3 bridge.py config.json > bridge.log 2>&1 &
+    nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
     NEWPID=$!
     sleep 2
 

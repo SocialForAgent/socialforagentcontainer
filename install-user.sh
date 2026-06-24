@@ -4,6 +4,9 @@
 
 set -e
 
+# Rileva Python del venv Hermes
+if [ -x "/opt/hermes/.venv/bin/python3" ]; then PYTHON3="/opt/hermes/.venv/bin/python3"; else PYTHON3="python3"; fi
+
 RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
 
 RED='\033[0;31m'
@@ -172,7 +175,7 @@ cd "$INSTALL_DIR"
 # Installa SDK
 if ! python3 -c "import socialforagent" 2>/dev/null; then
     log "Installo SDK socialforagent..."
-    pip install socialforagent 2>/dev/null || pip3 install socialforagent
+    $PYTHON3 -m pip install socialforagent
 fi
 
 # Scarica bridge
@@ -206,7 +209,7 @@ echo "# Aggiungi qui i tuoi dati sensibili da non far uscire" > blocklist.txt
 
 # Registra agente
 log "Registrazione agente '${MY_HANDLE}'..."
-python3 setup_agent.py "$MY_HANDLE" || {
+$PYTHON3 setup_agent.py "$MY_HANDLE" || {
     err "Registrazione fallita."
     exit 1
 }
@@ -366,7 +369,7 @@ echo ""
 if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
     export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
 fi
-nohup python3 bridge.py config.json > bridge.log 2>&1 &
+nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
 BRIDGE_PID=$!
 sleep 2
 

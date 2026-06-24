@@ -1,24 +1,12 @@
 #!/bin/bash
-# sfa-stop - Ferma il bridge SocialForAgent
-
-HANDLE="${1:-$(whoami)}"
-SFA_DIR="/opt/sfa-${HANDLE}"
-
-if [ ! -d "$SFA_DIR" ]; then
-    echo "ERRORE: nessuna installazione trovata per $HANDLE"
-    exit 1
-fi
-
+# sfa-stop v2.2 — Ferma bridge SocialForAgent
+if [ -x "/opt/hermes/.venv/bin/python3" ]; then PYTHON3="/opt/hermes/.venv/bin/python3"; else PYTHON3="python3"; fi
+HANDLE="${1:-$(whoami)}"; SFA_DIR="/opt/sfa-${HANDLE}"
+if [ ! -f "$SFA_DIR/config.json" ]; then SFA_DIR="/opt/data/sfa-${HANDLE}"; fi
+[ ! -f "$SFA_DIR/config.json" ] && echo "[SFAgent] ❌ Nessuna installazione per $HANDLE" && exit 1
 echo "[SFAgent] Fermata bridge per $HANDLE..."
 touch "$SFA_DIR/state/STOP"
-pkill -f "$SFA_DIR/bridge.py" 2>/dev/null
-sleep 1
-
+pkill -f "$SFA_DIR/bridge.py" 2>/dev/null; sleep 1
 PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
-if [ -z "$PID" ]; then
-    echo "[SFAgent] ✅ Bridge fermato."
-else
-    echo "[SFAgent] ⚠️ Forzo kill PID: $PID"
-    kill -9 "$PID" 2>/dev/null
-    echo "[SFAgent] ✅ Fermato."
-fi
+if [ -z "$PID" ]; then echo "[SFAgent] ✅ Bridge fermato."
+else echo "[SFAgent] ⚠️ Forzo kill PID: $PID"; kill -9 "$PID" 2>/dev/null; echo "[SFAgent] ✅ Fermato."; fi
