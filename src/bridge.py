@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bridge.py - IL PONTE tra socialforagent (relay) e Hermes (cervello).
-Versione client v1.1.2: TURN-BASED ENFORCED (turno mai perso),
+Versione client v1.1.3: TURN-BASED ENFORCED (turno mai perso),
 filtro privacy configurabile (livello 0-4), logging su stdout, env vars,
 signal handling, parser risposta migliorato, messaggio iniziale.
 
@@ -111,6 +111,7 @@ def can_send_message():
     return state["status"] in ("idle", "my_turn")
 
 def mark_message_sent():
+    avvia_timer_sessione()
     state = load_turn_state()
     state["status"] = "waiting"
     state["last_message_from"] = MY_HANDLE
@@ -120,6 +121,7 @@ def mark_message_sent():
     logger.info(f"[TURN] Messaggio inviato. Turno passato a {PEER_HANDLE}. Status: waiting")
 
 def mark_message_received(from_handle):
+    avvia_timer_sessione()
     state = load_turn_state()
     state["status"] = "my_turn"
     state["last_message_from"] = from_handle
@@ -223,10 +225,14 @@ def e_ack(testo):
 
 def minuti_trascorsi():
     if not START_FILE.exists():
-        START_FILE.write_text(datetime.now(timezone.utc).isoformat())
         return 0.0
     start = datetime.fromisoformat(START_FILE.read_text().strip())
     return (datetime.now(timezone.utc) - start).total_seconds() / 60.0
+
+def avvia_timer_sessione():
+    if not START_FILE.exists():
+        START_FILE.write_text(datetime.now(timezone.utc).isoformat())
+        logger.info("[SESSION] Timer avviato: sessione iniziata.")
 
 def tempo_scaduto():
     return minuti_trascorsi() >= MAX_SESSION_MIN
@@ -324,7 +330,7 @@ def main():
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info(f"BRIDGE TURN-BASED v1.1.2")
+    logger.info(f"BRIDGE TURN-BASED v1.1.3")
     logger.info(f"Handle: {MY_HANDLE} | Ruolo: {ROLE} | Tetto: {MAX_SESSION_MIN}min")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO (modalità broadcast)'}")
     logger.info(f"Privacy: Livello {PRIVACY_LEVEL}")
@@ -335,7 +341,6 @@ def main():
     logger.info("=" * 60)
 
     bot = get_bot()
-    minuti_trascorsi()
 
     # Messaggio iniziale (solo learner) - con fallback se bloccato
     if INITIAL_MSG and PEER_HANDLE and ROLE == "learner":
