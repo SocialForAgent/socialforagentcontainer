@@ -1,48 +1,25 @@
 #!/bin/bash
-# social-status — Stato SocialForAgent sulla VPS corrente
-# Legge SOLO i config presenti su questa macchina. Nessun dato di default.
-
+# social-status v2.1 — Stato SocialForAgent sulla VPS corrente
+# Fix: rileva PID anche quando bridge è avviato con path relativo
 set -e
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-# Cerca config su questa VPS (tutte le possibili cartelle sfa)
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 CONFIG_FOUND=""
 for dir in /opt/sfa-* /opt/data/sfa-*; do
-    if [ -f "$dir/config.json" ]; then
-        CONFIG_FOUND="$dir/config.json"
-        break
-    fi
+    if [ -f "$dir/config.json" ]; then CONFIG_FOUND="$dir/config.json"; break; fi
 done
-
-# Se non trova nulla
 echo ""
 if [ -z "$CONFIG_FOUND" ]; then
     echo "╔══════════════════════════════════════════════════════════╗"
     echo "║  SOCIALFORAGENT — STATO VPS                              ║"
     echo "╠══════════════════════════════════════════════════════════╣"
-    echo "║                                                          ║"
     echo "║  ❌ NESSUNA REGISTRAZIONE TROVATA                        ║"
-    echo "║                                                          ║"
     echo "║  Su questa VPS/container non è ancora stato              ║"
     echo "║  configurato alcun agente SocialForAgent.               ║"
-    echo "║                                                          ║"
-    echo "║  Per registrarti:                                        ║"
-    echo "║    social-setup                                          ║"
-    echo "║  oppure:                                                 ║"
-    echo "║    curl -fsSL .../install-user.sh | bash                 ║"
-    echo "║                                                          ║"
+    echo "║  Per registrarti: social-setup                             ║"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo ""
     exit 0
 fi
-
-# Legge dati dal config trovato (reale, non default)
 MY_HANDLE=$(python3 -c "import json; d=json.load(open('$CONFIG_FOUND')); print(d.get('my_handle','???'))" 2>/dev/null || echo "???")
 ROLE=$(python3 -c "import json; d=json.load(open('$CONFIG_FOUND')); print(d.get('role','???'))" 2>/dev/null || echo "???")
 PEER=$(python3 -c "import json; d=json.load(open('$CONFIG_FOUND')); print(d.get('peer_handle','nessuno'))" 2>/dev/null || echo "nessuno")
@@ -51,59 +28,42 @@ PRIV=$(python3 -c "import json; d=json.load(open('$CONFIG_FOUND')); print(d.get(
 MAX_MIN=$(python3 -c "import json; d=json.load(open('$CONFIG_FOUND')); print(d.get('max_session_min','???'))" 2>/dev/null || echo "???")
 DIR=$(dirname "$CONFIG_FOUND")
 
-# Trova PID se bridge attivo
-PID=$(pgrep -f "$DIR/bridge.py" | head -1)
+# ⭐ FIX: rileva PID anche con path relativo
+PID=""
+for pid in $(pgrep -f "python3.*bridge.py" 2>/dev/null); do
+    if [ -d "/proc/$pid" ]; then
+        CWD=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+        if [ "$CWD" = "$DIR" ]; then PID="$pid"; break; fi
+    fi
+done
+if [ -z "$PID" ]; then PID=$(pgrep -f "$DIR/bridge.py" | head -1); fi
 
-# Stato privacy in parole
-PRIV_WORD="???"
-case "$PRIV" in
-    0) PRIV_WORD="SPENTO" ;;
-    1) PRIV_WORD="BASSO" ;;
-    2) PRIV_WORD="MEDIO" ;;
-    3) PRIV_WORD="ALTO" ;;
-    4) PRIV_WORD="TOTALE" ;;
-esac
+PRIV_WORD="???"; case "$PRIV" in 0) PRIV_WORD="SPENTO" ;; 1) PRIV_WORD="BASSO" ;; 2) PRIV_WORD="MEDIO" ;; 3) PRIV_WORD="ALTO" ;; 4) PRIV_WORD="TOTALE" ;; esac
 
-# Output ruolo-specifico
 echo "╔══════════════════════════════════════════════════════════╗"
-
 if [ "$ROLE" = "teacher" ]; then
     echo "║  👨‍🏫 STATO MAESTRO — VPS CORRENTE                      ║"
     echo "╠══════════════════════════════════════════════════════════╣"
     printf "║  Nickname:  %-44s ║\n" "$MY_HANDLE"
     printf "║  Ruolo:     %-44s ║\n" "Maestro (Teacher)"
-    if [ -n "$PID" ]; then
-        printf "║  Stato:     %-44s ║\n" "✅ IN ASCOLTO (PID: $PID)"
-    else
-        printf "║  Stato:     %-44s ║\n" "❌ FERMO"
-    fi
+    if [ -n "$PID" ]; then printf "║  Stato:     %-44s ║\n" "✅ IN ASCOLTO (PID: $PID)"
+    else printf "║  Stato:     %-44s ║\n" "❌ FERMO"; fi
     printf "║  Modalità:  %-44s ║\n" "Broadcast (accetta da chiunque)"
 else
     echo "║  🎓 STATO ALUNNO — VPS CORRENTE                        ║"
     echo "╠══════════════════════════════════════════════════════════╣"
     printf "║  Nickname:  %-44s ║\n" "$MY_HANDLE"
     printf "║  Ruolo:     %-44s ║\n" "Alunno (Learner)"
-    if [ -n "$PID" ]; then
-        printf "║  Stato:     %-44s ║\n" "✅ CONNESSO (PID: $PID)"
-    else
-        printf "║  Stato:     %-44s ║\n" "❌ DISCONNESSO"
-    fi
+    if [ -n "$PID" ]; then printf "║  Stato:     %-44s ║\n" "✅ CONNESSO (PID: $PID)"
+    else printf "║  Stato:     %-44s ║\n" "❌ DISCONNESSO"; fi
     printf "║  Maestro:   %-44s ║\n" "$PEER"
 fi
-
 echo "╠══════════════════════════════════════════════════════════╣"
 printf "║  Pool:      %-44s ║\n" "${POLL}s"
 printf "║  Privacy:   %-44s ║\n" "Livello $PRIV ($PRIV_WORD)"
 printf "║  Timeout:   %-44s ║\n" "${MAX_MIN} minuti"
 printf "║  Config:    %-44s ║\n" "$CONFIG_FOUND"
 echo "╚══════════════════════════════════════════════════════════╝"
-
-# Ultimo log
-if [ -f "$DIR/bridge.log" ]; then
-    LAST=$(tail -1 "$DIR/bridge.log" 2>/dev/null | cut -c1-55)
-    echo ""
-    echo "Ultimo log: $LAST"
-fi
-
+if [ -f "$DIR/bridge.log" ]; then LAST=$(tail -1 "$DIR/bridge.log" 2>/dev/null | cut -c1-55); echo ""; echo "Ultimo log: $LAST"; fi
 echo ""
 echo "Comandi: social-restart | social-stop | social-chat | sfa-chat"
