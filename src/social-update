@@ -1,7 +1,16 @@
 #!/bin/bash
-# social-update v2.2 — Aggiorna TUTTO SocialForAgent con rilevamento venv Hermes
+# social-update v2.3 — Auto-aggiornamento, verifica robusta avvio bridge
 # Uso: social-update
 # Aggiorna: bridge.py, social-setup, social-status, sfa-status, sfa-restart, sfa-stop, sfa-chat
+
+# BUG 1 — Auto-aggiornamento: scarica se stesso dal repo prima di tutto
+SELF_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main/src/social-update"
+if [ -z "$SOCIAL_UPDATE_V3" ] && [ -f /usr/local/bin/social-update ] && [ -w /usr/local/bin/social-update ]; then
+    curl -fsSL "$SELF_URL" -o /usr/local/bin/social-update.tmp 2>/dev/null && \
+    chmod +x /usr/local/bin/social-update.tmp && \
+    mv /usr/local/bin/social-update.tmp /usr/local/bin/social-update && \
+    export SOCIAL_UPDATE_V3=1 && exec /usr/local/bin/social-update "$@"
+fi
 
 set -e
 
@@ -74,6 +83,13 @@ for f in $FILES; do
     fi
 done
 
+# BUG 3 — Aggiorna subito sfa-restart in /usr/local/bin/ prima di riavviare i bridge
+if [ -f "$TMP_DIR/sfa-restart" ]; then
+    cp "$TMP_DIR/sfa-restart" /usr/local/bin/sfa-restart 2>/dev/null || true
+    chmod +x /usr/local/bin/sfa-restart 2>/dev/null || true
+    log "✅ sfa-restart aggiornato (prima del riavvio)"
+fi
+
 # --- 3. Aggiorna ogni installazione ---
 echo ""
 for dir in $INSTALL_DIRS; do
@@ -123,16 +139,23 @@ for dir in $INSTALL_DIRS; do
     rm -f "$dir/state/start_*.txt" "$dir/state/turn_*.json" 2>/dev/null || true
     info "  Stato resettato (timeout evitato)"
 
-    # Riavvia
+    # BUG 2 — Riavvio con verifica robusta
     cd "$dir"
     nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
     NEWPID=$!
-    sleep 2
+    sleep 4
 
     if kill -0 "$NEWPID" 2>/dev/null; then
         log "  ✅ $HANDLE riavviato (PID: $NEWPID)"
+        # Secondo check dopo 3 secondi
+        sleep 3
+        if ! pgrep -f "$dir/bridge.py" > /dev/null 2>&1; then
+            err "  ❌ Bridge morto dopo avvio. Ultime righe del log:"
+            tail -5 "$dir/bridge.log" 2>/dev/null | while read line; do echo "     $line"; done
+        fi
     else
-        err "  ❌ $HANDLE non si è avviato. Controlla: $dir/bridge.log"
+        err "  ❌ $HANDLE non si è avviato. Ultime righe del log:"
+        tail -5 "$dir/bridge.log" 2>/dev/null | while read line; do echo "     $line"; done
     fi
     echo ""
 done
