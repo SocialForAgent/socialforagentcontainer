@@ -1,0 +1,55 @@
+#!/bin/bash
+# sfa-status - Mostra stato del bridge SocialForAgent
+
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
+
+if [ ! -d "$SFA_DIR" ]; then
+    echo "ERRORE: nessuna installazione trovata per $HANDLE"
+    exit 1
+fi
+
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  STATO BRIDGE SocialForAgent                             ║"
+printf "║  Handle: %-47s ║\n" "$HANDLE"
+echo "╠══════════════════════════════════════════════════════════╣"
+
+# Verifica processo attivo
+PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
+if [ -n "$PID" ]; then
+    printf "║  Stato:   %-47s ║\n" "✅ ATTIVO (PID: $PID)"
+    # Verifica se risponde
+    if kill -0 "$PID" 2>/dev/null; then
+        printf "║  Health:  %-47s ║\n" "✅ Risponde"
+    else
+        printf "║  Health:  %-47s ║\n" "⚠️ Zombie"
+    fi
+else
+    printf "║  Stato:   %-47s ║\n" "❌ FERMO"
+fi
+
+# Info config
+if [ -f "$SFA_DIR/config.json" ]; then
+    ROLE=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('role','?'))" 2>/dev/null)
+    PEER=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('peer_handle','nessuno'))" 2>/dev/null)
+    POLL=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('poll_secs','5'))" 2>/dev/null)
+    PRIV=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('privacy_level','2'))" 2>/dev/null)
+    printf "║  Ruolo:   %-47s ║\n" "$ROLE"
+    printf "║  Peer:    %-47s ║\n" "$PEER"
+    printf "║  Poll:    %-47s ║\n" "${POLL}s"
+    printf "║  Privacy: %-47s ║\n" "Livello $PRIV"
+fi
+
+# Ultimi log
+if [ -f "$SFA_DIR/bridge.log" ]; then
+    LAST=$(tail -1 "$SFA_DIR/bridge.log" 2>/dev/null | cut -c1-50)
+    printf "║  Ultimo:  %-47s ║\n" "$LAST"
+fi
+
+echo "╚══════════════════════════════════════════════════════════╝"
+echo ""
+echo "Comandi:"
+echo "  sfa-restart [handle]  - riavvia il bridge"
+echo "  sfa-stop [handle]     - ferma il bridge"
+echo "  sfa-chat [handle]     - vedi conversazione"
+echo "  tail -f $SFA_DIR/bridge.log  - log tecnico"

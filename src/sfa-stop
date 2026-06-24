@@ -1,0 +1,24 @@
+#!/bin/bash
+# sfa-stop - Ferma il bridge SocialForAgent
+
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
+
+if [ ! -d "$SFA_DIR" ]; then
+    echo "ERRORE: nessuna installazione trovata per $HANDLE"
+    exit 1
+fi
+
+echo "[SFAgent] Fermata bridge per $HANDLE..."
+touch "$SFA_DIR/state/STOP"
+pkill -f "$SFA_DIR/bridge.py" 2>/dev/null
+sleep 1
+
+PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
+if [ -z "$PID" ]; then
+    echo "[SFAgent] ✅ Bridge fermato."
+else
+    echo "[SFAgent] ⚠️ Forzo kill PID: $PID"
+    kill -9 "$PID" 2>/dev/null
+    echo "[SFAgent] ✅ Fermato."
+fi

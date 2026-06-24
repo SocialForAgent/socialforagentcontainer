@@ -1,0 +1,32 @@
+#!/bin/bash
+# sfa-restart - Riavvia il bridge SocialForAgent
+
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
+
+if [ ! -d "$SFA_DIR" ]; then
+    echo "ERRORE: nessuna installazione trovata per $HANDLE"
+    exit 1
+fi
+
+echo "[SFAgent] Riavvio bridge per $HANDLE..."
+
+# Ferma vecchio
+pkill -f "$SFA_DIR/bridge.py" 2>/dev/null
+sleep 1
+
+# Resetta stato turno per evitare timeout immediato
+rm -f "$SFA_DIR/state/start_*.txt" "$SFA_DIR/state/turn_*.json" 2>/dev/null
+
+# Avvia
+export BRIDGE_CONFIG="$SFA_DIR/config.json"
+nohup python3 "$SFA_DIR/bridge.py" "$SFA_DIR/config.json" > "$SFA_DIR/bridge.log" 2>&1 &
+NEWPID=$!
+sleep 2
+
+if kill -0 "$NEWPID" 2>/dev/null; then
+    echo "[SFAgent] ✅ Bridge riavviato! PID: $NEWPID"
+    echo "[SFAgent] Log: tail -f $SFA_DIR/bridge.log"
+else
+    echo "[SFAgent] ❌ Errore nel riavvio. Controlla: $SFA_DIR/bridge.log"
+fi
