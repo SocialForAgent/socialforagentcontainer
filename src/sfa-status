@@ -1,55 +1,138 @@
 #!/bin/bash
-# sfa-status - Mostra stato del bridge SocialForAgent
+# sfa-status v2 — Stato bridge SocialForAgent con awareness ruolo
+# Uso: sfa-status [handle]
+# Se nessun handle passato, trova automaticamente il config locale
 
-HANDLE="${1:-$(whoami)}"
-SFA_DIR="/opt/sfa-${HANDLE}"
+set -e
 
-if [ ! -d "$SFA_DIR" ]; then
-    echo "ERRORE: nessuna installazione trovata per $HANDLE"
+# Colori
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Trova il config dell'utente corrente (auto-detect)
+MY_USER=$(whoami)
+SFA_DIRS=(
+    "/opt/sfa-${MY_USER}"
+    "/opt/data/sfa-${MY_USER}"
+)
+
+AUTO_DIR=""
+for d in "${SFA_DIRS[@]}"; do
+    if [ -f "$d/config.json" ]; then
+        AUTO_DIR="$d"
+        break
+    fi
+done
+
+# Se handle passato come argomento
+REQUESTED_HANDLE="${1:-}"
+
+# Se nessun handle richiesto, usa auto-detect
+if [ -z "$REQUESTED_HANDLE" ]; then
+    if [ -z "$AUTO_DIR" ]; then
+        echo -e "${RED}ERRORE:${NC} Nessuna installazione trovata per l'utente corrente ($MY_USER)"
+        echo ""
+        echo "Installazioni trovate nel sistema:"
+        find /opt /opt/data -maxdepth 2 -name "config.json" -path "*sfa*" 2>/dev/null | while read f; do
+            dir=$(dirname "$f")
+            h=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('my_handle','?'))" 2>/dev/null)
+            r=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('role','?'))" 2>/dev/null)
+            echo "  • $dir → handle: $h, ruolo: $r"
+        done
+        echo ""
+        echo "Usa: sfa-status <handle> per specificare chi vuoi controllare"
+        exit 1
+    fi
+    SFA_DIR="$AUTO_DIR"
+else
+    # Handle richiesto esplicitamente
+    SFA_DIR="/opt/sfa-${REQUESTED_HANDLE}"
+    if [ ! -f "$SFA_DIR/config.json" ]; then
+        SFA_DIR="/opt/data/sfa-${REQUESTED_HANDLE}"
+    fi
+fi
+
+if [ ! -f "$SFA_DIR/config.json" ]; then
+    echo -e "${RED}ERRORE:${NC} Nessuna installazione trovata per '${REQUESTED_HANDLE:-$MY_USER}'"
+    echo "Percorso cercato: $SFA_DIR"
     exit 1
 fi
 
-echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  STATO BRIDGE SocialForAgent                             ║"
-printf "║  Handle: %-47s ║\n" "$HANDLE"
-echo "╠══════════════════════════════════════════════════════════╣"
+# Leggi config
+MY_HANDLE=$(python3 -c "import json; d=json.load(open('$SFA_DIR/config.json')); print(d.get('my_handle','?'))" 2>/dev/null)
+ROLE=$(python3 -c "import json; d=json.load(open('$SFA_DIR/config.json')); print(d.get('role','?'))" 2>/dev/null)
+PEER_HANDLE=$(python3 -c "import json; d=json.load(open('$SFA_DIR/config.json')); print(d.get('peer_handle','nessuno'))" 2>/dev/null)
+POLL=$(python3 -c "import json; d=json.load(open('$SFA_DIR/config.json')); print(d.get('poll_secs','5'))" 2>/dev/null)
+PRIV=$(python3 -c "import json; d=json.load(open('$SFA_DIR/config.json')); print(d.get('privacy_level','2'))" 2>/dev/null)
 
-# Verifica processo attivo
-PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
-if [ -n "$PID" ]; then
-    printf "║  Stato:   %-47s ║\n" "✅ ATTIVO (PID: $PID)"
-    # Verifica se risponde
-    if kill -0 "$PID" 2>/dev/null; then
-        printf "║  Health:  %-47s ║\n" "✅ Risponde"
-    else
-        printf "║  Health:  %-47s ║\n" "⚠️ Zombie"
+# Verifica ruolo-aware
+if [ -n "$REQUESTED_HANDLE" ] && [ "$REQUESTED_HANDLE" != "$MY_HANDLE" ]; then
+    # L'utente ha richiesto un handle diverso dal proprio
+    if [ "$ROLE" = "learner" ]; then
+        echo -e "${YELLOW}⚠️  ATTENZIONE:${NC} Sei un ALUNNO (handle: ${CYAN}$MY_HANDLE${NC})"
+        echo "    Non puoi controllare lo stato di '${REQUESTED_HANDLE}' come se fossi un maestro."
+        echo "    Il tuo maestro è: ${CYAN}${PEER_HANDLE}${NC}"
+        echo ""
+        echo "Per vedere il TUO stato: sfa-status (senza argomenti)"
+        exit 1
     fi
+fi
+
+# Trova PID
+PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
+
+# Banner ruolo-specifico
+echo ""
+if [ "$ROLE" = "teacher" ]; then
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  👨‍🏫 STATO MAESTRO                                       ║"
+    printf "║  Nickname: %-45s ║\n" "$MY_HANDLE"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    if [ -n "$PID" ]; then
+        printf "║  Stato:    %-45s ║\n" "✅ IN ASCOLTO (PID: $PID)"
+    else
+        printf "║  Stato:    %-45s ║\n" "❌ FERMO"
+    fi
+    printf "║  Modalità: %-45s ║\n" "Broadcast (accetta da chiunque)"
+    printf "║  Poll:     %-45s ║\n" "${POLL}s"
+    printf "║  Privacy:  %-45s ║\n" "Livello $PRIV"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Gli alunni possono scriverti a: ${CYAN}$MY_HANDLE${NC}"
+
 else
-    printf "║  Stato:   %-47s ║\n" "❌ FERMO"
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  🎓 STATO ALUNNO                                         ║"
+    printf "║  Il tuo nickname: %-38s ║\n" "$MY_HANDLE"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    if [ -n "$PID" ]; then
+        printf "║  Stato:    %-45s ║\n" "✅ CONNESSO (PID: $PID)"
+    else
+        printf "║  Stato:    %-45s ║\n" "❌ DISCONNESSO"
+    fi
+    printf "║  Maestro:  %-45s ║\n" "${PEER_HANDLE}"
+    printf "║  Poll:     %-45s ║\n" "${POLL}s"
+    printf "║  Privacy:  %-45s ║\n" "Livello $PRIV"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    if [ -n "$PID" ]; then
+        echo "Stai imparando da: ${CYAN}${PEER_HANDLE}${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Il bridge è fermo. Riavvia con:${NC} sfa-restart"
+    fi
 fi
 
-# Info config
-if [ -f "$SFA_DIR/config.json" ]; then
-    ROLE=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('role','?'))" 2>/dev/null)
-    PEER=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('peer_handle','nessuno'))" 2>/dev/null)
-    POLL=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('poll_secs','5'))" 2>/dev/null)
-    PRIV=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('privacy_level','2'))" 2>/dev/null)
-    printf "║  Ruolo:   %-47s ║\n" "$ROLE"
-    printf "║  Peer:    %-47s ║\n" "$PEER"
-    printf "║  Poll:    %-47s ║\n" "${POLL}s"
-    printf "║  Privacy: %-47s ║\n" "Livello $PRIV"
-fi
-
-# Ultimi log
+# Log recente
 if [ -f "$SFA_DIR/bridge.log" ]; then
     LAST=$(tail -1 "$SFA_DIR/bridge.log" 2>/dev/null | cut -c1-50)
-    printf "║  Ultimo:  %-47s ║\n" "$LAST"
+    echo ""
+    echo "Ultimo log: $LAST"
 fi
 
-echo "╚══════════════════════════════════════════════════════════╝"
+# Comandi disponibili
 echo ""
-echo "Comandi:"
-echo "  sfa-restart [handle]  - riavvia il bridge"
-echo "  sfa-stop [handle]     - ferma il bridge"
-echo "  sfa-chat [handle]     - vedi conversazione"
-echo "  tail -f $SFA_DIR/bridge.log  - log tecnico"
+echo "Comandi: sfa-restart | sfa-stop | sfa-chat | tail -f $SFA_DIR/bridge.log"
