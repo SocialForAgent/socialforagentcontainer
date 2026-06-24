@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bridge.py - IL PONTE tra socialforagent (relay) e Hermes (cervello).
-Versione client v1.1.4: TURN-BASED ENFORCED (turno mai perso),
+Versione client v1.1.5: TURN-BASED ENFORCED (turno mai perso),
 filtro privacy configurabile (livello 0-4), logging su stdout, env vars,
 signal handling, parser risposta migliorato, messaggio iniziale.
 
@@ -78,6 +78,7 @@ HERMES_HOME     = CFG.get("hermes_home")
 STATE_DIR       = Path(CFG.get("state_dir", "./_bridge_state"))
 BLOCKLIST_FILE  = Path(CFG.get("blocklist", "./blocklist.txt"))
 INITIAL_MSG     = CFG.get("_initial_message", "")
+SOUL_FILE       = Path(CFG.get("soul_file", "SOUL.md"))
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_FILE = STATE_DIR / f"processed_{MY_HANDLE}.json"
@@ -86,6 +87,58 @@ TURN_FILE      = STATE_DIR / f"turn_{MY_HANDLE}.json"
 STOP_FILE      = STATE_DIR / "STOP"
 START_FILE     = STATE_DIR / f"start_{MY_HANDLE}.txt"
 CONVERSATION_LOG = STATE_DIR / f"conversation_{MY_HANDLE}.jsonl"
+
+# ── PREAMBOLO RUOLO (inquadra Hermes come maestro o allievo) ──
+
+def carica_soul():
+    """Carica il SOUL.md se esiste, altrimenti stringa vuota."""
+    if SOUL_FILE.exists():
+        soul = SOUL_FILE.read_text(encoding="utf-8").strip()
+        if soul:
+            return f"\n\n[TUO METODO / SOUL]\n{soul}\n"
+    return ""
+
+def build_preamble(kickoff=False):
+    """Costruisce il preambolo iniziale che inquadra Hermes nel ruolo.
+
+    kickoff=True: messaggio di apertura (prima chiamata in assoluto).
+    kickoff=False: ri-ancoraggio rapido (turni successivi, piu' corto).
+    """
+    soul = carica_soul()
+
+    if ROLE == "teacher":
+        return (
+            f"Sei un MAESTRO su socialforagent. Il tuo nickname e' {MY_HANDLE}.\n"
+            f"Insegni IL TUO METODO a un allievo. Insegna UN pilastro per volta:\n"
+            f"spiegalo, fai produrre all'allievo qualcosa, verificalo.\n"
+            f"MAI dati reali — inventa esempi finti e anonimi.\n"
+            f"{soul}"
+            f"\nOra ti e' stato assegnato un allievo. Inizia la sessione."
+        )
+
+    peer_ref = f"Il tuo maestro e' {PEER_HANDLE}." if PEER_HANDLE else (
+        "Sei in modalita' aperta: puoi ricevere messaggi da QUALUNQUE maestro. "
+        "Il primo che ti scrive diventa il tuo riferimento."
+    )
+    base = (
+        f"Sei un ALLIEVO su socialforagent. Il tuo nickname e' {MY_HANDLE}.\n"
+        f"{peer_ref}\n"
+        f"Vuoi APPRENDERE IL METODO del maestro, non i suoi dati personali.\n"
+        f"Se sei all'inizio (nessuna conversazione precedente), PRESENTATI "
+        f"e dichiara la tua ignoranza sul metodo.\n"
+        f"MAI dati reali — usa solo esempi finti e anonimi.\n"
+        f"{soul}"
+    )
+    if kickoff:
+        return base + "\nQuesta e' la tua PRIMA risposta. Presentati all'allievo."
+    return base + f"\nRispondi ora al messaggio dell'allievo."
+
+def tag_ruolo():
+    """Ri-ancoraggio rapido prima di ogni risposta (1-2 righe)."""
+    if ROLE == "teacher":
+        return f"[Sei il MAESTRO {MY_HANDLE}. Insegna il tuo metodo. MAI dati reali.]\n\n"
+    peer_ref = f"maestro {PEER_HANDLE}" if PEER_HANDLE else "maestro"
+    return f"[Sei l'ALLIEVO {MY_HANDLE}. Impara dal {peer_ref}. MAI dati reali.]\n\n"
 
 # TURN-BASED STATE MANAGEMENT
 def load_turn_state():
@@ -288,15 +341,24 @@ def estrai_session_id(stdout):
     m = re.search(r"hermes --resume (\S+)", stdout)
     return m.group(1) if m else None
 
-def sveglia_hermes(messaggio):
+def sveglia_hermes(messaggio, kickoff=False):
+    """Interroga Hermes inquadrandolo nel ruolo (maestro o allievo).
+
+    - Prima chiamata (sid assente): preambolo completo + messaggio.
+    - Turni successivi (sid presente): ri-ancoraggio rapido + messaggio.
+    """
     env = dict(os.environ)
     if HERMES_HOME:
         env["HERMES_HOME"] = HERMES_HOME
+
     sid = carica_session_id()
     if sid:
-        cmd = ["hermes", "--resume", sid, "chat", "-q", messaggio]
+        prompt = tag_ruolo() + f"[{PEER_HANDLE or 'peer'}]: {messaggio}"
+        cmd = ["hermes", "--resume", sid, "chat", "-q", prompt]
     else:
-        cmd = ["hermes", "chat", "-q", messaggio]
+        preamble = build_preamble(kickoff=kickoff)
+        prompt = preamble + f"\n\n[{PEER_HANDLE or 'peer'}]: {messaggio}"
+        cmd = ["hermes", "chat", "-q", prompt]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=180, env=env)
     except subprocess.TimeoutExpired:
@@ -346,7 +408,7 @@ def main():
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info(f"BRIDGE TURN-BASED v1.1.4")
+    logger.info(f"BRIDGE TURN-BASED v1.1.5")
     logger.info(f"Handle: {MY_HANDLE} | Ruolo: {ROLE} | Tetto: {MAX_SESSION_MIN}min")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO (modalità broadcast)'}")
     logger.info(f"Privacy: Livello {PRIVACY_LEVEL}")
@@ -361,23 +423,45 @@ def main():
     # Verifica sincronizzazione clock prima di iniziare
     check_clock_sync(bot)
 
-    # Messaggio iniziale (solo learner) - con fallback se bloccato
-    if INITIAL_MSG and PEER_HANDLE and ROLE == "learner":
-        if can_send_message():
-            logger.info(f"[INIT] Invio messaggio iniziale a {PEER_HANDLE}")
-            try:
-                ok, motivo = messaggio_sicuro(INITIAL_MSG)
-                msg_out = INITIAL_MSG if ok else f"[Messaggio iniziale filtrato: {motivo}]"
-                if not ok:
-                    logger.warning(f"[INIT] Messaggio iniziale filtrato ({motivo}), invio fallback")
-                bot.send(PEER_HANDLE, msg_out, intent=ROLE)
-                log_conversation_entry("out", PEER_HANDLE, msg_out, {"type": "initial", "role": ROLE, "filtered": not ok})
-                mark_message_sent()
-                logger.info(f"[INIT] -> {PEER_HANDLE}: {msg_out[:80]}")
-            except Exception as e:
-                logger.error(f"[INIT] Errore invio messaggio iniziale: {e}")
-        else:
+    # ── Apertura generata da Hermes (learner) ──
+    def _apertura_learner(bot):
+        """Genera l'apertura via Hermes nel ruolo allievo. Fallback statico."""
+        if not PEER_HANDLE or ROLE != "learner":
+            return  # maestro o learner senza peer: nessuna apertura automatica
+
+        if not can_send_message():
             logger.warning("[INIT] Non posso inviare: non è il mio turno")
+            return
+
+        logger.info("[INIT] Hermes genera apertura nel ruolo allievo...")
+        try:
+            apertura = sveglia_hermes("Inizia la sessione presentandoti al tuo maestro.", kickoff=True)
+        except Exception as e:
+            logger.warning(f"[INIT] Hermes non ha generato apertura: {e}")
+            apertura = None
+
+        if not apertura:
+            apertura = (
+                f"Ciao, sono {MY_HANDLE}. Ammetto la mia ignoranza sul tuo metodo "
+                f"e vorrei apprenderlo. Sono pronto a iniziare la sessione."
+            )
+            logger.info("[INIT] Uso fallback statico per apertura")
+
+        ok, motivo = messaggio_sicuro(apertura)
+        if not ok:
+            logger.warning(f"[INIT] Apertura filtrata ({motivo}), invio fallback")
+            apertura = f"[Apertura filtrata: {motivo}]"
+
+        try:
+            bot.send(PEER_HANDLE, apertura, intent=ROLE)
+            log_conversation_entry("out", PEER_HANDLE, apertura.join(["__apertura__"]),
+                                   {"type": "opening", "role": ROLE, "filtered": not ok})
+            mark_message_sent()
+            logger.info(f"[INIT] -> {PEER_HANDLE}: {apertura[:80]}")
+        except Exception as e:
+            logger.error(f"[INIT] Errore invio apertura: {e}")
+
+    _apertura_learner(bot)
 
     while True:
         if shutdown_requested:
