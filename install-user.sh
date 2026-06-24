@@ -83,13 +83,17 @@ while true; do
     fi
 done
 
-# --- Peer handle (solo learner) ---
+# --- Peer handle (OPZIONALE per learner) ---
 PEER_HANDLE=""
 if [ "$ROLE" = "learner" ]; then
-    read -p "  Handle del maestro (es. Luca_Maestro): " PEER_HANDLE < /dev/tty
+    echo ""
+    info "Handle del maestro (opzionale):"
+    echo "  Se lasci vuoto, potrai ricevere messaggi da QUALUNQUE maestro."
+    read -p "  Handle maestro [Invio=aperto]: " PEER_HANDLE < /dev/tty
     if [ -z "$PEER_HANDLE" ]; then
-        err "Handle maestro obbligatorio per l'alunno."
-        exit 1
+        log "Modalita' aperta: accetti messaggi da chiunque."
+    else
+        log "Maestro preimpostato: $PEER_HANDLE"
     fi
 fi
 
@@ -133,11 +137,13 @@ log "Livello privacy: $PRIVACY_LEVEL"
 read -p "  Minuti massimi sessione [20]: " MAX_MIN < /dev/tty
 MAX_MIN="${MAX_MIN:-20}"
 
-# --- Messaggio iniziale (solo learner) ---
+# --- Messaggio iniziale (solo learner, solo se maestro preimpostato) ---
 INITIAL_MSG=""
 if [ "$ROLE" = "learner" ]; then
     echo ""
-    info "Messaggio iniziale per il maestro (opzionale):"
+    info "Messaggio iniziale (opzionale):"
+    echo "  Se hai un maestro preimpostato, verra' inviato a lui."
+    echo "  Se sei in modalita' aperta, NON verra' inviato."
     read -p "  Prompt: " INITIAL_MSG < /dev/tty
 fi
 
@@ -148,7 +154,8 @@ echo "║              RIEPILOGO CONFIGURAZIONE                    ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 printf "║  Handle:        %-40s ║\n" "$MY_HANDLE"
 printf "║  Ruolo:         %-40s ║\n" "$ROLE"
-[ -n "$PEER_HANDLE" ] && printf "║  Maestro:       %-40s ║\n" "$PEER_HANDLE"
+[ -n "$PEER_HANDLE" ] && printf "║  Maestro:       %-40s ║\n" "$PEER_HANDLE (fisso)"
+[ -z "$PEER_HANDLE" ] && [ "$ROLE" = "learner" ] && printf "║  Maestro:       %-40s ║\n" "APERTO (chiunque)"
 printf "║  Tempo:         %-40s ║\n" "${MAX_MIN}min"
 printf "║  Poll:          %-40s ║\n" "${POLL_SECS}s"
 printf "║  Privacy:       %-40s ║\n" "Livello $PRIVACY_LEVEL"
@@ -206,6 +213,12 @@ python3 setup_agent.py "$MY_HANDLE" || {
 
 # Crea comandi rapidi
 log "Installo comandi rapidi..."
+
+# Scarica social-status e social-update dal repo
+curl -fsSL "${RAW_URL}/src/social-status" -o /usr/local/bin/social-status 2>/dev/null || true
+chmod +x /usr/local/bin/social-status 2>/dev/null || true
+curl -fsSL "${RAW_URL}/src/social-update" -o /usr/local/bin/social-update 2>/dev/null || true
+chmod +x /usr/local/bin/social-update 2>/dev/null || true
 
 # sfa-status
 cat > /usr/local/bin/sfa-status <<SFAEOF
@@ -335,7 +348,7 @@ chmod +x /usr/local/bin/sfa-stop
 
 # Avvia
 log "Avvio bridge..."
-if [ -n "$INITIAL_MSG" ]; then
+if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
     export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
 fi
 
@@ -344,7 +357,8 @@ echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  COMANDI RAPIDI DISPONIBILI:                             ║"
 echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  sfa-status             - vedi stato bridge              ║"
+echo "║  social-status          - vedi stato bridge              ║"
+echo "║  social-update          - aggiorna tutto                 ║"
 echo "║  sfa-restart [handle]   - riavvia bridge                 ║"
 echo "║  sfa-stop [handle]      - ferma bridge                   ║"
 echo "║  sfa-chat [handle]      - vedi conversazione             ║"
