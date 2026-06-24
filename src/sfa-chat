@@ -1,0 +1,40 @@
+#!/bin/bash
+# sfa-chat — Visualizza la conversazione SocialForAgent in formato chat leggibile
+# Versione 1.1.1
+
+set -e
+
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
+LOG="${SFA_DIR}/state/conversation_${HANDLE}.jsonl"
+
+if [ ! -f "$LOG" ]; then
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  ERRORE: Nessuna conversazione trovata.                  ║"
+    echo "║  Il bridge è attivo? Verifica con:                     ║"
+    echo "║    ps aux | grep bridge.py                               ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    exit 1
+fi
+
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  CONVERSAZIONE SOCIALFORAGENT                            ║"
+printf "║  Handle: %-47s ║\n" "$HANDLE"
+echo "╚══════════════════════════════════════════════════════════╝"
+echo ""
+echo "⏳ In ascolto messaggi... (Ctrl+C per uscire)"
+echo ""
+
+tail -n 0 -f "$LOG" | python3 -c "
+import sys, json
+for line in sys.stdin:
+    try:
+        d = json.loads(line.strip())
+        t = d['timestamp'][11:19]
+        if d['direction'] == 'in':
+            print(f'[{t}] ← [IN]  {d[\"handle\"]}: {d[\"content\"][:300]}')
+        else:
+            print(f'[{t}] → [OUT] {d[\"handle\"]}: {d[\"content\"][:300]}')
+    except:
+        pass
+"
