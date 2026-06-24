@@ -1,5 +1,5 @@
 #!/bin/bash
-# social-update v2.3 — Auto-aggiornamento, verifica robusta avvio bridge
+# social-update v2.4 — Ordine pulizia stato corretto, tail -10 su errori
 # Uso: social-update
 # Aggiorna: bridge.py, social-setup, social-status, sfa-status, sfa-restart, sfa-stop, sfa-chat
 
@@ -109,6 +109,10 @@ for dir in $INSTALL_DIRS; do
         fi
     fi
 
+    # Pulisci stato PRIMA di copiare/avviare (evita che STOP o turno vecchio blocchino)
+    rm -f "$dir/state/STOP" "$dir/state/start_*.txt" "$dir/state/turn_*.json" 2>/dev/null || true
+    info "  Stato pulito"
+
     # Backup vecchio bridge
     if [ -f "$dir/bridge.py" ]; then
         BAK="$dir/bridge.py.bak.$(date +%Y%m%d_%H%M%S)"
@@ -135,11 +139,7 @@ for dir in $INSTALL_DIRS; do
         chmod +x "$dir/sfa-chat"
     fi
 
-    # Resetta stato per evitare timeout immediato
-    rm -f "$dir/state/start_*.txt" "$dir/state/turn_*.json" 2>/dev/null || true
-    info "  Stato resettato (timeout evitato)"
-
-    # BUG 2 — Riavvio con verifica robusta
+    # Avvia
     cd "$dir"
     nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
     NEWPID=$!
@@ -151,11 +151,11 @@ for dir in $INSTALL_DIRS; do
         sleep 3
         if ! pgrep -f "$dir/bridge.py" > /dev/null 2>&1; then
             err "  ❌ Bridge morto dopo avvio. Ultime righe del log:"
-            tail -5 "$dir/bridge.log" 2>/dev/null | while read line; do echo "     $line"; done
+            tail -10 "$dir/bridge.log" 2>/dev/null | while read line; do echo "     $line"; done
         fi
     else
         err "  ❌ $HANDLE non si è avviato. Ultime righe del log:"
-        tail -5 "$dir/bridge.log" 2>/dev/null | while read line; do echo "     $line"; done
+        tail -10 "$dir/bridge.log" 2>/dev/null | while read line; do echo "     $line"; done
     fi
     echo ""
 done
