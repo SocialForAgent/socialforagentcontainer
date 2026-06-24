@@ -1,0 +1,178 @@
+#!/bin/bash
+# social-update — Aggiorna TUTTO SocialForAgent alla ultima versione
+# Uso: social-update
+# Aggiorna: bridge.py, social-setup, social-status, sfa-status, sfa-restart, sfa-stop, sfa-chat
+
+set -e
+
+RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
+# Fallback se main non è ancora aggiornato (cache CDN)
+COMMIT_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/93d0e76"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}[UPDATE]${NC} $1"; }
+warn() { echo -e "${YELLOW}[UPDATE]${NC} $1"; }
+err()  { echo -e "${RED}[UPDATE]${NC} $1"; }
+info() { echo -e "${BLUE}[UPDATE]${NC} $1"; }
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  SOCIALFORAGENT — AGGIORNAMENTO ALL'ULTIMA VERSIONE     ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+echo ""
+
+# --- 1. Trova tutte le installazioni su questa VPS ---
+FOUND=0
+INSTALL_DIRS=""
+
+for dir in /opt/sfa-* /opt/data/sfa-*; do
+    if [ -f "$dir/config.json" ]; then
+        FOUND=1
+        HANDLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('my_handle','?'))" 2>/dev/null || echo "?")
+        ROLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('role','?'))" 2>/dev/null || echo "?")
+        info "Trovato: $HANDLE ($ROLE) in $dir"
+        INSTALL_DIRS="$INSTALL_DIRS $dir"
+    fi
+done
+
+if [ "$FOUND" = "0" ]; then
+    echo ""
+    warn "⚠️ Nessuna installazione SocialForAgent trovata su questa VPS."
+    echo ""
+    echo "Per installare da zero:"
+    echo "  social-setup"
+    echo "  oppure:"
+    echo "  curl -fsSL ${RAW_URL}/install-user.sh | bash"
+    echo ""
+    exit 1
+fi
+
+# --- 2. Scarica nuovi file dal repo (una sola volta, poi copia) ---
+echo ""
+info "Scarico ultima versione dal repo..."
+
+TMP_DIR="/tmp/sfa-update-$$"
+mkdir -p "$TMP_DIR"
+
+FILES="bridge.py setup_agent.py sfa-chat sfa-status sfa-restart sfa-stop social-status social-setup"
+for f in $FILES; do
+    if curl -fsSL "${RAW_URL}/src/${f}" -o "$TMP_DIR/${f}" 2>/dev/null; then
+        log "✅ ${f} (main)"
+    elif curl -fsSL "${COMMIT_URL}/src/${f}" -o "$TMP_DIR/${f}" 2>/dev/null; then
+        warn "⚠️  ${f} (commit fallback — CDN non aggiornata)"
+    else
+        err "❌ ${f} non trovato su repo"
+    fi
+done
+
+# --- 3. Aggiorna ogni installazione ---
+echo ""
+for dir in $INSTALL_DIRS; do
+    HANDLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('my_handle','?'))" 2>/dev/null || echo "?")
+    info "Aggiorno $HANDLE..."
+
+    # Ferma bridge
+    PID=$(pgrep -f "$dir/bridge.py" | head -1)
+    if [ -n "$PID" ]; then
+        info "  Fermo bridge (PID: $PID)..."
+        kill "$PID" 2>/dev/null || true
+        sleep 2
+        # Forza se zombie
+        if kill -0 "$PID" 2>/dev/null; then
+            kill -9 "$PID" 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+
+    # Backup vecchio bridge
+    if [ -f "$dir/bridge.py" ]; then
+        BAK="$dir/bridge.py.bak.$(date +%Y%m%d_%H%M%S)"
+        cp "$dir/bridge.py" "$BAK"
+        info "  Backup: $BAK"
+    fi
+
+    # Copia nuovo bridge
+    if [ -f "$TMP_DIR/bridge.py" ]; then
+        cp "$TMP_DIR/bridge.py" "$dir/bridge.py"
+        chmod +x "$dir/bridge.py"
+        log "  ✅ bridge.py aggiornato"
+    fi
+
+    # Copia setup_agent.py
+    if [ -f "$TMP_DIR/setup_agent.py" ]; then
+        cp "$TMP_DIR/setup_agent.py" "$dir/setup_agent.py"
+        chmod +x "$dir/setup_agent.py"
+    fi
+
+    # Copia sfa-chat
+    if [ -f "$TMP_DIR/sfa-chat" ]; then
+        cp "$TMP_DIR/sfa-chat" "$dir/sfa-chat"
+        chmod +x "$dir/sfa-chat"
+    fi
+
+    # Resetta stato per evitare timeout immediato
+    rm -f "$dir/state/start_*.txt" "$dir/state/turn_*.json" 2>/dev/null || true
+    info "  Stato resettato (timeout evitato)"
+
+    # Riavvia
+    cd "$dir"
+    nohup python3 bridge.py config.json > bridge.log 2>&1 &
+    NEWPID=$!
+    sleep 2
+
+    if kill -0 "$NEWPID" 2>/dev/null; then
+        log "  ✅ $HANDLE riavviato (PID: $NEWPID)"
+    else
+        err "  ❌ $HANDLE non si è avviato. Controlla: $dir/bridge.log"
+    fi
+    echo ""
+done
+
+# --- 4. Aggiorna comandi di sistema ---
+echo ""
+info "Aggiorno comandi di sistema..."
+
+for cmd in social-status social-setup sfa-status sfa-restart sfa-stop sfa-chat; do
+    if [ -f "$TMP_DIR/${cmd}" ]; then
+        cp "$TMP_DIR/${cmd}" "/usr/local/bin/${cmd}" 2>/dev/null || \
+        cp "$TMP_DIR/${cmd}" "/usr/bin/${cmd}" 2>/dev/null || \
+        cp "$TMP_DIR/${cmd}" "/bin/${cmd}" 2>/dev/null || true
+        chmod +x "/usr/local/bin/${cmd}" 2>/dev/null || \
+        chmod +x "/usr/bin/${cmd}" 2>/dev/null || \
+        chmod +x "/bin/${cmd}" 2>/dev/null || true
+        log "✅ ${cmd} aggiornato"
+    else
+        warn "⚠️ ${cmd} non scaricato (saltato)"
+    fi
+done
+
+# Pulizia
+rm -rf "$TMP_DIR"
+
+# --- 5. Riepilogo ---
+echo ""
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  AGGIORNAMENTO COMPLETATO ✅                             ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+echo ""
+
+for dir in $INSTALL_DIRS; do
+    HANDLE=$(python3 -c "import json; d=json.load(open('$dir/config.json')); print(d.get('my_handle','?'))" 2>/dev/null || echo "?")
+    PID=$(pgrep -f "$dir/bridge.py" | head -1)
+    if [ -n "$PID" ]; then
+        echo "  ✅ $HANDLE — PID: $PID"
+    else
+        echo "  ❌ $HANDLE — FERMO"
+    fi
+done
+
+echo ""
+echo "Verifica con: social-status"
+echo "Log: tail -f /opt/sfa-{handle}/bridge.log"
+echo ""
