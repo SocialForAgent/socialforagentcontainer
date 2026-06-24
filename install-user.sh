@@ -42,7 +42,7 @@ echo ""
 info "Seleziona il tuo ruolo:"
 echo "  1) Maestro (Teacher) - insegni ad altri"
 echo "  2) Allievo (Learner) - impari da un maestro"
-read -p "Scelta [1/2]: " choice
+read -p "Scelta [1/2]: " choice < /dev/tty
 case "$choice" in
     1) ROLE="teacher" ;;
     2) ROLE="learner" ;;
@@ -54,7 +54,7 @@ log "Ruolo: $ROLE"
 # --- Configurazione ---
 echo ""
 info "Configurazione agente:"
-read -p "  Il tuo handle (es. Mario_Gommista): " MY_HANDLE
+read -p "  Il tuo handle (es. Mario_Gommista): " MY_HANDLE < /dev/tty
 
 if [ -z "$MY_HANDLE" ]; then
     err "Handle obbligatorio."
@@ -69,24 +69,24 @@ fi
 
 PEER_HANDLE=""
 if [ "$ROLE" = "learner" ]; then
-    read -p "  Handle del maestro (es. Luca_Maestro): " PEER_HANDLE
+    read -p "  Handle del maestro (es. Luca_Maestro): " PEER_HANDLE < /dev/tty
     if [ -z "$PEER_HANDLE" ]; then
         err "Handle maestro obbligatorio per l'alunno."
         exit 1
     fi
 fi
 
-read -p "  Minuti massimi sessione [20]: " MAX_MIN
+read -p "  Minuti massimi sessione [20]: " MAX_MIN < /dev/tty
 MAX_MIN="${MAX_MIN:-20}"
 
-read -p "  Secondi tra un poll [5]: " POLL_SECS
+read -p "  Secondi tra un poll [5]: " POLL_SECS < /dev/tty
 POLL_SECS="${POLL_SECS:-5}"
 
 INITIAL_MSG=""
 if [ "$ROLE" = "learner" ]; then
     echo ""
     info "Messaggio iniziale per il maestro (opzionale):"
-    read -p "  Prompt: " INITIAL_MSG
+    read -p "  Prompt: " INITIAL_MSG < /dev/tty
 fi
 
 # --- Riepilogo ---
@@ -98,7 +98,7 @@ echo "  Ruolo: $ROLE"
 echo "  Tempo: ${MAX_MIN}min"
 echo "  Poll: ${POLL_SECS}s"
 [ -n "$INITIAL_MSG" ] && echo "  Messaggio: $INITIAL_MSG"
-read -p "Confermi? [Y/n]: " CONFIRM
+read -p "Confermi? [Y/n]: " CONFIRM < /dev/tty
 [ "$CONFIRM" = "n" ] && exit 1
 
 # --- Installazione ---
