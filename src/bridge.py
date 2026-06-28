@@ -84,6 +84,11 @@ SHARED_DIR.mkdir(parents=True, exist_ok=True)
 BRIDGE_LOCK = STATE_DIR / "BRIDGE_LOCK"
 BRIDGE_LAST_MSG_ID = STATE_DIR / f"last_msg_id_{MY_HANDLE}.txt"
 
+# ── BRIDGE STATUS (v2.5.1) —— coerenza sessione Telegram ──
+BRIDGE_STATUS = STATE_DIR / "bridge_status.json"
+LAST_EXCHANGES = []  # ultimi N scambi in memoria
+EXCHANGE_MAX = 10    # quanti tenere
+
 def acquire_lock():
     """Crea il lock file. Se esiste già un PID, verifica che sia davvero un bridge.py.
     
@@ -136,25 +141,61 @@ def check_external_consumption(current_messages):
             BRIDGE_LAST_MSG_ID.write_text(str(last_id))
 
 # ── CONVERSATION CONTEXT (v2.5) ──
-def get_recent_context(n=12):
-    """Legge gli ultimi N messaggi dal conversation log e costruisce un riassunto."""
+
+# ── BRIDGE STATUS (v2.5.1) —— coerenza sessione Telegram ──
+def update_bridge_status(direction, sender, text, timestamp=None):
+    """Scrive un file status.json che Hermes può leggere nella sessione Telegram.
+    Mantiene gli ultimi EXCHANGE_MAX scambi con riepilogo."""
+    global LAST_EXCHANGES
+    ts = timestamp or datetime.now(timezone.utc).isoformat()
+    summary = text[:200].replace('\n', ' ') if text else '(vuoto)'
+    LAST_EXCHANGES.append({
+        "time": ts,
+        "dir": direction,
+        "from": sender,
+        "summary": summary
+    })
+    if len(LAST_EXCHANGES) > EXCHANGE_MAX:
+        LAST_EXCHANGES = LAST_EXCHANGES[-EXCHANGE_MAX:]
+    
+    status = {
+        "bridge_version": "2.5.1",
+        "handle": MY_HANDLE,
+        "peer": PEER_HANDLE,
+        "role": ROLE,
+        "last_update": ts,
+        "exchanges": LAST_EXCHANGES,
+        "exchange_count": len(LAST_EXCHANGES)
+    }
+    try:
+        BRIDGE_STATUS.write_text(json.dumps(status, ensure_ascii=False, indent=2))
+    except Exception:
+        pass
+
+def get_recent_context(n=12, max_chars=3000):
+    """Legge gli ultimi N messaggi dal conversation log e costruisce un riassunto.
+    v2.5.1: aggiunto max_chars per evitare prompt enormi che bloccano DeepSeek."""
     if not CONVERSATION_LOG.exists(): return ""
     try:
         lines = []
         with open(CONVERSATION_LOG, "r", encoding="utf-8") as f:
-            # Legge solo le ultime ~N righe
             all_lines = f.readlines()
             lines = all_lines[-n:] if len(all_lines) > n else all_lines
         
         if not lines: return ""
         
         entries = []
-        for line in lines:
+        total = 0
+        for line in reversed(lines):  # più recenti prima
             try:
                 e = json.loads(line.strip())
-                content = e.get("content", e.get("text", ""))[:300]
+                content = e.get("content", e.get("text", ""))[:200]  # 200 char max per entry
                 sender = e.get("handle", e.get("from", "?"))
-                entries.append(f"[{sender}]: {content}")
+                entry = f"[{sender}]: {content}"
+                if total + len(entry) > max_chars:
+                    break
+                entries.insert(0, entry)
+                total += len(entry) + 1
             except: pass
         
         if entries:
@@ -827,6 +868,7 @@ def main():
             if PEER_HANDLE and mittente != PEER_HANDLE:
                 logger.info(f"[IGNORE] {mittente} != {PEER_HANDLE}"); continue
             logger.info(f"[RECV] <- {mittente}: {testo[:80]}")
+            update_bridge_status("IN", mittente, testo)  # v2.5.1: coerenza sessione Telegram
             
             if APPRENTICESHIP_MODE:
                 process_apprenticeship_commands(testo, mittente)
@@ -879,6 +921,7 @@ def main():
                 log_conversation_entry("out", mittente, risposta, {"reply_to": mid})
                 mark_message_sent()
                 logger.info(f"[SEND] -> {mittente}: {risposta[:80]}")
+                update_bridge_status("OUT", mittente, risposta)  # v2.5.1: coerenza sessione Telegram
                 
                 # ── v2.2: ANTI-LOOP CHECK su messaggio inviato ──
                 if APPRENTICESHIP_MODE and detect_conversation_loop(risposta, MY_HANDLE):
