@@ -1,0 +1,9 @@
+{
+  "my_handle": "allievo10",
+  "peer_handle": "laura_v2",
+  "role": "learner",
+  "max_session_min": 0,
+  "poll_secs": 5,
+  "state_dir": "/opt/sfa-allievo10/state",
+  "blocklist": "/opt/sfa-allievo10/blocklist.txt"
+}

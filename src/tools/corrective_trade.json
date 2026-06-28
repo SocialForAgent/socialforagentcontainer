@@ -1,0 +1,46 @@
+{
+  "trade": {
+    "name": "CORRETTIVA — Flusso Appuntamenti NewTeogomme",
+    "version": "1.0.0",
+    "domain": "automotive",
+    "description": "Lezione correttiva urgente: Giorgia NON deve prendere appuntamenti. Deve SEMPRE fare escalation a Teo via email, aspettare risposta, poi richiamare il cliente.",
+    "author": "supervisore_Erminio"
+  },
+  "objectives": [
+    {
+      "id": "corr_1",
+      "title": "Capire il flusso corretto appuntamenti",
+      "master_prompt": "Spiega a Giorgia il flusso CORRETTO per gli appuntamenti.\n\nFLUSSO CORRETTO:\n1. Il cliente chiama e chiede un appuntamento\n2. Giorgia NON prende l'appuntamento. Dice: 'Verifico la disponibilità con Teo e la richiamo.'\n3. Il sistema manda un'email a Teo (newteogomme@icloud.com)\n4. Teo risponde con disponibilità e prezzo\n5. Il sistema richiama il cliente\n6. Giorgia conferma l'appuntamento al cliente\n7. Il sistema salva tutto nella knowledge base\n\nERRORE ATTUALE: il prompt di Giorgia dice 'PRENDI SUBITO appuntamento, NON fare escalation'.\n\nChiedi a Giorgia di descrivere il flusso attuale e correggila.",
+      "apprentice_prompt": "Descrivi il flusso che usi quando un cliente ti chiede un appuntamento. Il maestro ti correggerà.",
+      "verification": "Giorgia descrive correttamente: cliente chiama, escalation a Teo, callback, conferma, KB."
+    },
+    {
+      "id": "corr_2",
+      "title": "Correggere il prompt ElevenLabs (v1.json)",
+      "master_prompt": "Fai aprire a Giorgia /opt/data/allievo10/prompt_default/v1.json. Trova la sezione APPUNTAMENTI.\n\nIl prompt dice 'PRENDILO SUBITO, NON fare escalation'. Sostituisci con:\n'APPUNTAMENTI: NON fissare mai direttamente. Di sempre: Verifico la disponibilità e la richiamo. Il sistema manda email a Teo, poi callback per conferma.'\n\nFai modificare il file a Giorgia.",
+      "apprentice_prompt": "Apri /opt/data/allievo10/prompt_default/v1.json, trova la sezione APPUNTAMENTI e mostrala al maestro. Poi modificala.",
+      "verification": "Il prompt v1.json ha la sezione APPUNTAMENTI corretta (NON prende, SEMPRE escalation)."
+    },
+    {
+      "id": "corr_3",
+      "title": "Correggere orchestrator.py — escalation a Teo",
+      "master_prompt": "In /opt/data/allievo10/orchestrator.py, nel main() c'è 'escalate_to_paolo()' ma deve essere 'escalate_to_teo()'. L'escalation deve andare a Teo, non a Paolo. La funzione escalate_to_teo() esiste già. Fai correggere la chiamata.",
+      "apprentice_prompt": "Apri orchestrator.py, cerca 'escalate_to_paolo' e correggila in 'escalate_to_teo'.",
+      "verification": "Nel main() c'è escalate_to_teo() non escalate_to_paolo()."
+    },
+    {
+      "id": "corr_4",
+      "title": "Correggere LLM system prompt per rilevare appuntamenti",
+      "master_prompt": "In orchestrator.py, il system prompt LLM dice 'NON è escalation: cambio gomme, prezzi'. Questo fa ignorare gli appuntamenti! Sostituisci con: 'RICHIESTE DI APPUNTAMENTO (cambio gomme, convergenza) DEVONO attivare escalate=true per mandare email a Teo.'",
+      "apprentice_prompt": "Trova la sezione 'NON è escalation' in orchestrator.py e modificala come dice il maestro.",
+      "verification": "Il system prompt LLM chiede escalate=true per richieste di appuntamento."
+    },
+    {
+      "id": "corr_5",
+      "title": "Push prompt su ElevenLabs e verifica",
+      "master_prompt": "Fai eseguire a Giorgia i comandi per pushare il nuovo prompt su ElevenLabs. Poi verifica che il ciclo orchestrator giri senza errori.",
+      "apprentice_prompt": "Esegui i comandi indicati dal maestro per aggiornare ElevenLabs e verificare il sistema.",
+      "verification": "Prompt ElevenLabs aggiornato. Orchestrator senza errori."
+    }
+  ]
+}
