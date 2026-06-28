@@ -840,6 +840,7 @@ def main():
     acquire_lock()  # v2.5: previene due bridge sullo stesso agente
     minuti_trascorsi()
     last_nudge_time = 0  # per evitare nudge troppo frequenti
+    last_reap_time = 0  # v2.5.1: reaping zombie
 
     while True:
         if shutdown_requested: logger.info("Shutdown graceful."); release_lock(); break
@@ -977,6 +978,18 @@ def main():
                     except Exception as e:
                         logger.error(f"[IDLE NUDGE] Fallito: {e}")
         # ── fine v2.1 ──
+
+        # v2.5.1: reaping zombie children (hermes chat subprocess)
+        now = time.time()
+        if now - last_reap_time > 60:  # ogni 60 secondi
+            try:
+                while True:
+                    wpid, _ = os.waitpid(-1, os.WNOHANG)
+                    if wpid == 0:
+                        break
+            except ChildProcessError:
+                pass
+            last_reap_time = now
 
         time.sleep(POLL_SECS)
 
