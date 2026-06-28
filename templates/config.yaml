@@ -1,0 +1,28 @@
+# SFA Agent Configuration
+# Generato automaticamente da `sfa init`
+
+agent:
+  name: "changeme"           # nome agente (es. "laura", "giorgia")
+  peer: "changeme"           # nome peer (es. "laura", "giorgia")
+  role: "orchestrator"       # orchestrator | worker | relay
+
+elevenlabs:
+  agent_id: ""               # ElevenLabs agent ID
+  api_key_env: "ELEVENLABS_API_KEY"
+
+orch:
+  interval: 180              # secondi tra un ciclo e l'altro
+  working_hours_only: true   # gira solo in orario lavorativo
+
+guardian:
+  enabled: true
+  rate_limit_sec: 3600       # max 1 notifica/ora
+  cooldown_safeguard: 900    # 15 min tra ripristini prompt
+  lock_ttl: 600              # 10 min TTL lock file
+  max_consecutive_fixes: 3   # dopo 3 fix uguali → alert
+  max_fixes_per_day: 10      # dopo 10 fix in 24h → rallenta
+
+notifications:
+  channel: "telegram"        # telegram | discord | email
+  telegram_chat_id: ""       # chat ID per notifiche
+  email_to: ""               # solo se channel=email
