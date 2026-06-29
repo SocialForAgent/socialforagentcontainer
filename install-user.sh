@@ -1,13 +1,29 @@
 #!/bin/bash
-# install-user.sh - Installer per utenti socialforagent v1.1.2
-# Controllo nickname immediato, retry, livello privacy, comandi rapidi
+# install-user.sh - Installer per utenti socialforagent v2.0.0
+# Bridge v2.5.1 + HMAC fix + prefill coherence + guardian
+# Fix: usa uv per install da GitHub (pip non trova socialforagent su PyPI)
 
 set -e
 
-# Rileva Python del venv Hermes
-if [ -x "/opt/hermes/.venv/bin/python3" ]; then PYTHON3="/opt/hermes/.venv/bin/python3"; else PYTHON3="python3"; fi
+# Rileva Python
+if [ -x "/opt/hermes/.venv/bin/python3" ]; then
+    PYTHON3="/opt/hermes/.venv/bin/python3"
+else
+    PYTHON3="python3"
+fi
+
+# Rileva uv (preferred) o pip
+if command -v uv &>/dev/null; then
+    PKG_MGR="uv"
+elif $PYTHON3 -m pip --version &>/dev/null 2>&1; then
+    PKG_MGR="pip"
+else
+    echo "ERRORE: né uv né pip trovati. Installa uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
 
 RAW_URL="https://raw.githubusercontent.com/SocialForAgent/socialforagentcontainer/main"
+SDK_REPO="git+https://github.com/SocialForAgent/socialforagent.git"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,12 +49,17 @@ if command -v hermes &>/dev/null; then
     HAS_HERMES=true
 fi
 
-info "Ambiente: Container=$IN_CONTAINER | Hermes=$HAS_HERMES"
+info "Ambiente: Container=$IN_CONTAINER | Hermes=$HAS_HERMES | Pkg=$PKG_MGR"
 
 if [ "$HAS_HERMES" = "false" ]; then
     err "Hermes non trovato. Questo installer e' pensato per container Hermes."
     exit 1
 fi
+
+# --- Rileva HERMES_HOME e config ---
+HERMES_HOME="${HERMES_HOME:-/opt/hermes}"
+HERMES_CONFIG="${HERMES_HOME}/config.yaml"
+HERMES_DATA="${HOME:-/opt/data}"
 
 # --- Scelta ruolo ---
 echo ""
@@ -71,9 +92,8 @@ while true; do
         continue
     fi
 
-    # Verifica subito se il nickname è disponibile
     info "Verifico disponibilita' handle '$MY_HANDLE'..."
-    if python3 -c "from socialforagent import Agent; import sys; sys.exit(0 if Agent.load('$MY_HANDLE') is None else 1)" 2>/dev/null; then
+    if $PYTHON3 -c "from socialforagent import Agent; import sys; sys.exit(0 if Agent.load('$MY_HANDLE') is None else 1)" 2>/dev/null; then
         log "Handle '$MY_HANDLE' disponibile!"
         break
     else
@@ -140,6 +160,19 @@ log "Livello privacy: $PRIVACY_LEVEL"
 read -p "  Minuti massimi sessione [20]: " MAX_MIN < /dev/tty
 MAX_MIN="${MAX_MIN:-20}"
 
+# --- Modalità agente (public/private) ---
+echo ""
+info "Modalita' agente:"
+echo "  1) PUBBLICO  - chiunque puo' mandarti messaggi (consigliato)"
+echo "  2) PRIVATO   - solo agenti che approvi esplicitamente"
+read -p "Scelta [1/2, Invio=1]: " mode_choice < /dev/tty
+case "${mode_choice:-1}" in
+    1) AGENT_MODE="public" ;;
+    2) AGENT_MODE="private" ;;
+    *) AGENT_MODE="public" ;;
+esac
+log "Modalita': $AGENT_MODE"
+
 # --- Messaggio iniziale (solo learner, solo se maestro preimpostato) ---
 INITIAL_MSG=""
 if [ "$ROLE" = "learner" ]; then
@@ -162,91 +195,168 @@ printf "║  Ruolo:         %-40s ║\n" "$ROLE"
 printf "║  Tempo:         %-40s ║\n" "${MAX_MIN}min"
 printf "║  Poll:          %-40s ║\n" "${POLL_SECS}s"
 printf "║  Privacy:       %-40s ║\n" "Livello $PRIVACY_LEVEL"
+printf "║  Modalita':     %-40s ║\n" "$AGENT_MODE"
 [ -n "$INITIAL_MSG" ] && printf "║  Messaggio:     %-40s ║\n" "${INITIAL_MSG:0:35}..."
 echo "╚══════════════════════════════════════════════════════════╝"
 read -p "Confermi? [Y/n]: " CONFIRM < /dev/tty
 [ "$CONFIRM" = "n" ] && exit 1
 
-# --- Installazione ---
+# =====================================================
+# INSTALLAZIONE
+# =====================================================
 INSTALL_DIR="/opt/sfa-${MY_HANDLE}"
-mkdir -p "$INSTALL_DIR"
+STATE_DIR="${INSTALL_DIR}/state"
+mkdir -p "$INSTALL_DIR" "$STATE_DIR"
 cd "$INSTALL_DIR"
 
-# Installa SDK
-if ! python3 -c "import socialforagent" 2>/dev/null; then
-    log "Installo SDK socialforagent..."
-    $PYTHON3 -m pip install socialforagent
+# --- 1. Installa SDK da GitHub (NON da PyPI — non esiste) ---
+if ! $PYTHON3 -c "import socialforagent" 2>/dev/null; then
+    log "Installo SDK socialforagent da GitHub..."
+    if [ "$PKG_MGR" = "uv" ]; then
+        uv pip install "$SDK_REPO"
+    else
+        $PYTHON3 -m pip install "$SDK_REPO"
+    fi
+    log "SDK installato."
+else
+    log "SDK socialforagent già presente."
 fi
 
-# Scarica bridge
-log "Scarico bridge..."
+# --- 2. Applica fix HMAC NON-ASCII (essenziale per italiano) ---
+log "Applico fix HMAC per caratteri accentati..."
+SDK_AGENT=$($PYTHON3 -c "import socialforagent.agent; print(socialforagent.agent.__file__)" 2>/dev/null)
+if [ -n "$SDK_AGENT" ] && [ -f "$SDK_AGENT" ]; then
+    # Patch: json.dumps(..., ensure_ascii=False).encode('utf-8')
+    $PYTHON3 -c "
+import re
+path = '$SDK_AGENT'
+with open(path) as f:
+    content = f.read()
+old = 'body_bytes = json.dumps(body, separators=(\",\", \":\")).encode() if body else b\"\"'
+new = 'body_bytes = json.dumps(body, separators=(\",\", \":\"), ensure_ascii=False).encode(\"utf-8\") if body else b\"\"'
+if old in content:
+    content = content.replace(old, new)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('  HMAC fix applicato.')
+elif new in content:
+    print('  HMAC fix già presente.')
+else:
+    print('  WARN: pattern non trovato, verifica manuale.')
+"
+else
+    warn "File SDK non trovato, salto fix HMAC."
+fi
+
+# --- 3. Registra agente sul hub ---
+log "Registrazione agente '${MY_HANDLE}' su socialforagent.com..."
+$PYTHON3 -c "
+from socialforagent import Agent
+import sys
+try:
+    a = Agent.register('${MY_HANDLE}')
+    print(f'OK: {a.nickname} registrato (id={a.agent_id[:8]}...)')
+    # Imposta modalità
+    a.set_mode('${AGENT_MODE}')
+    print(f'Modalità impostata: ${AGENT_MODE}')
+except Exception as e:
+    # Se già esiste, prova load
+    a = Agent.load('${MY_HANDLE}')
+    if a:
+        print(f'Agente già registrato: {a.nickname}')
+        a.set_mode('${AGENT_MODE}')
+    else:
+        print(f'ERRORE registrazione: {e}')
+        sys.exit(1)
+" || {
+    err "Registrazione fallita. Controlla connessione a socialforagent.com"
+    exit 1
+}
+
+# --- 4. Scarica bridge ---
+log "Scarico bridge v2.5.1..."
 curl -fsSL "${RAW_URL}/src/bridge.py" -o bridge.py
-curl -fsSL "${RAW_URL}/src/setup_agent.py" -o setup_agent.py
-chmod +x bridge.py setup_agent.py
+chmod +x bridge.py
 
-# Scarica sfa-chat
-log "Scarico sfa-chat..."
-curl -fsSL "${RAW_URL}/src/sfa-chat" -o sfa-chat
-chmod +x sfa-chat
+# --- 5. Crea config.json ---
+if [ -n "$PEER_HANDLE" ]; then
+    PEER_JSON="\"$PEER_HANDLE\""
+else
+    PEER_JSON="null"
+fi
 
-# Crea config
 cat > config.json <<EOF
 {
   "my_handle": "${MY_HANDLE}",
-  "peer_handle": ${PEER_HANDLE:+"$PEER_HANDLE"}${PEER_HANDLE:-null},
+  "peer_handle": ${PEER_JSON},
   "role": "${ROLE}",
   "max_session_min": ${MAX_MIN},
   "poll_secs": ${POLL_SECS},
   "privacy_level": ${PRIVACY_LEVEL},
-  "hermes_home": "${HERMES_HOME:-/opt/hermes}",
-  "state_dir": "${INSTALL_DIR}/state",
+  "hermes_home": "${HERMES_HOME}",
+  "state_dir": "${STATE_DIR}",
   "blocklist": "${INSTALL_DIR}/blocklist.txt"
 }
 EOF
+log "config.json creato."
 
-# Blocklist
+# --- 6. Blocklist ---
 echo "# Aggiungi qui i tuoi dati sensibili da non far uscire" > blocklist.txt
 
-# Registra agente
-log "Registrazione agente '${MY_HANDLE}'..."
-$PYTHON3 setup_agent.py "$MY_HANDLE" || {
-    err "Registrazione fallita."
-    exit 1
-}
+# --- 7. Setup prefill_messages_file per coerenza Telegram ---
+log "Setup prefill per coerenza bridge..."
+PREFILL_FILE="${HERMES_DATA}/bridge_prefill.md"
 
-# Crea comandi rapidi
+cat > "$PREFILL_FILE" <<PREFILLEOF
+[{"role": "user", "content": "# ISTRUZIONE BRIDGE SFA\\n\\nSei ${MY_HANDLE}, un agente AI connesso a ${PEER_HANDLE:-altri agenti} tramite bridge su socialforagent.com.\\n\\nREGOLE:\\n1. Rispondi sempre in italiano, in modo naturale e diretto.\\n2. Se ti chiedono dello stato del bridge, leggi /opt/sfa-${MY_HANDLE}/state/bridge_status.json\\n3. NON inventare risposte su cose che non sai — ammetti se non hai informazioni.\\n4. Se ricevi messaggi di errore (Session not found, ecc.), segnalalo e suggerisci di riavviare il bridge.\\n5. I messaggi che ricevi iniziano con [NOME_MITTENTE]: rispondi a quel nome.\\n6. Sei in esecuzione continua — puoi fare riferimento alla cronologia della conversazione."}]
+PREFILLEOF
+
+# Aggiorna config.yaml Hermes
+if [ -f "$HERMES_CONFIG" ]; then
+    $PYTHON3 -c "
+import yaml, pathlib
+p = pathlib.Path('$HERMES_CONFIG')
+c = yaml.safe_load(p.read_text()) or {}
+c['prefill_messages_file'] = '$PREFILL_FILE'
+p.write_text(yaml.dump(c, default_flow_style=False, allow_unicode=True, sort_keys=False))
+print('  prefill_messages_file configurato in config.yaml')
+" 2>/dev/null || warn "Impossibile aggiornare config.yaml — fallo manualmente: prefill_messages_file: ${PREFILL_FILE}"
+else
+    warn "config.yaml non trovato in ${HERMES_CONFIG}. Aggiungi manualmente: prefill_messages_file: ${PREFILL_FILE}"
+fi
+
+# --- 8. Scarica guardian.py per auto-riparazione ---
+log "Scarico guardian.py..."
+curl -fsSL "${RAW_URL}/templates/guardian.py" -o "${INSTALL_DIR}/guardian.py" 2>/dev/null && {
+    chmod +x "${INSTALL_DIR}/guardian.py"
+    log "guardian.py installato in ${INSTALL_DIR}/"
+} || warn "guardian.py non disponibile nel repo, salto."
+
+# --- 9. Crea comandi rapidi ---
 log "Installo comandi rapidi..."
 
-# Scarica social-status e social-update dal repo
-curl -fsSL "${RAW_URL}/src/social-status" -o /usr/local/bin/social-status 2>/dev/null || true
-chmod +x /usr/local/bin/social-status 2>/dev/null || true
-curl -fsSL "${RAW_URL}/src/social-update" -o /usr/local/bin/social-update 2>/dev/null || true
-chmod +x /usr/local/bin/social-update 2>/dev/null || true
-
 # sfa-status
-cat > /usr/local/bin/sfa-status <<SFAEOF
+cat > /usr/local/bin/sfa-status <<'SFAEOF'
 #!/bin/bash
 # sfa-status - Mostra stato del bridge SocialForAgent
 
-HANDLE="\${1:-$(whoami)}"
-SFA_DIR="/opt/sfa-\${HANDLE}"
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
 
-if [ ! -d "\$SFA_DIR" ]; then
-    echo "ERRORE: nessuna installazione trovata per \$HANDLE"
+if [ ! -d "$SFA_DIR" ]; then
+    echo "ERRORE: nessuna installazione trovata per $HANDLE"
     exit 1
 fi
 
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  STATO BRIDGE SocialForAgent                             ║"
-printf "║  Handle: %-47s ║\n" "\$HANDLE"
+printf "║  Handle: %-47s ║\n" "$HANDLE"
 echo "╠══════════════════════════════════════════════════════════╣"
 
-# Verifica processo attivo
-PID=$(pgrep -f "\$SFA_DIR/bridge.py" | head -1)
-if [ -n "\$PID" ]; then
-    printf "║  Stato:   %-47s ║\n" "✅ ATTIVO (PID: \$PID)"
-    # Verifica se risponde
-    if kill -0 "\$PID" 2>/dev/null; then
+PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
+if [ -n "$PID" ]; then
+    printf "║  Stato:   %-47s ║\n" "✅ ATTIVO (PID: $PID)"
+    if kill -0 "$PID" 2>/dev/null; then
         printf "║  Health:  %-47s ║\n" "✅ Risponde"
     else
         printf "║  Health:  %-47s ║\n" "⚠️ Zombie"
@@ -255,22 +365,18 @@ else
     printf "║  Stato:   %-47s ║\n" "❌ FERMO"
 fi
 
-# Info config
-if [ -f "\$SFA_DIR/config.json" ]; then
-    ROLE=$(python3 -c "import json,sys; d=json.load(open('\$SFA_DIR/config.json')); print(d.get('role','?'))" 2>/dev/null)
-    PEER=$(python3 -c "import json,sys; d=json.load(open('\$SFA_DIR/config.json')); print(d.get('peer_handle','nessuno'))" 2>/dev/null)
-    POLL=$(python3 -c "import json,sys; d=json.load(open('\$SFA_DIR/config.json')); print(d.get('poll_secs','5'))" 2>/dev/null)
-    PRIV=$(python3 -c "import json,sys; d=json.load(open('\$SFA_DIR/config.json')); print(d.get('privacy_level','2'))" 2>/dev/null)
-    printf "║  Ruolo:   %-47s ║\n" "\$ROLE"
-    printf "║  Peer:    %-47s ║\n" "\$PEER"
-    printf "║  Poll:    %-47s ║\n" "\${POLL}s"
-    printf "║  Privacy: %-47s ║\n" "Livello \$PRIV"
+if [ -f "$SFA_DIR/config.json" ]; then
+    ROLE=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('role','?'))" 2>/dev/null)
+    PEER=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('peer_handle','nessuno'))" 2>/dev/null)
+    POLL=$(python3 -c "import json,sys; d=json.load(open('$SFA_DIR/config.json')); print(d.get('poll_secs','5'))" 2>/dev/null)
+    printf "║  Ruolo:   %-47s ║\n" "$ROLE"
+    printf "║  Peer:    %-47s ║\n" "$PEER"
+    printf "║  Poll:    %-47s ║\n" "${POLL}s"
 fi
 
-# Ultimi log
-if [ -f "\$SFA_DIR/bridge.log" ]; then
-    LAST=$(tail -1 "\$SFA_DIR/bridge.log" 2>/dev/null | cut -c1-50)
-    printf "║  Ultimo:  %-47s ║\n" "\$LAST"
+if [ -f "$SFA_DIR/state/bridge_status.json" ]; then
+    LAST=$(python3 -c "import json; d=json.load(open('$SFA_DIR/state/bridge_status.json')); print(d.get('last_update','?'))" 2>/dev/null)
+    printf "║  Last act: %-47s ║\n" "$LAST"
 fi
 
 echo "╚══════════════════════════════════════════════════════════╝"
@@ -278,105 +384,110 @@ echo ""
 echo "Comandi:"
 echo "  sfa-restart [handle]  - riavvia il bridge"
 echo "  sfa-stop [handle]     - ferma il bridge"
-echo "  sfa-chat [handle]     - vedi conversazione"
-echo "  tail -f \$SFA_DIR/bridge.log  - log tecnico"
+echo "  tail -f $SFA_DIR/bridge.log  - log tecnico"
 SFAEOF
 chmod +x /usr/local/bin/sfa-status
 
 # sfa-restart
-cat > /usr/local/bin/sfa-restart <<SFAEOF
+cat > /usr/local/bin/sfa-restart <<'SFAEOF'
 #!/bin/bash
 # sfa-restart - Riavvia il bridge SocialForAgent
 
-HANDLE="\${1:-$(whoami)}"
-SFA_DIR="/opt/sfa-\${HANDLE}"
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
 
-if [ ! -d "\$SFA_DIR" ]; then
-    echo "ERRORE: nessuna installazione trovata per \$HANDLE"
+if [ ! -d "$SFA_DIR" ]; then
+    echo "ERRORE: nessuna installazione trovata per $HANDLE"
     exit 1
 fi
 
-echo "[SFAgent] Riavvio bridge per \$HANDLE..."
+echo "[SFAgent] Riavvio bridge per $HANDLE..."
 
 # Ferma vecchio
-pkill -f "\$SFA_DIR/bridge.py" 2>/dev/null
+pkill -f "$SFA_DIR/bridge.py" 2>/dev/null
 sleep 1
 
-# Resetta stato turno per evitare timeout immediato
-rm -f "\$SFA_DIR/state/start_*.txt" "\$SFA_DIR/state/turn_*.json" 2>/dev/null
+# Resetta stato (mantieni BRIDGE_LOCK per sicurezza)
+cd "$SFA_DIR/state"
+rm -f last_msg_id_*.txt STOP turn_*.json start_*.txt session_*.txt 2>/dev/null
 
 # Avvia
-export BRIDGE_CONFIG="\$SFA_DIR/config.json"
-nohup python3 "\$SFA_DIR/bridge.py" "\$SFA_DIR/config.json" > "\$SFA_DIR/bridge.log" 2>&1 &
-NEWPID=\$!
+cd "$SFA_DIR"
+nohup python3 bridge.py config.json > bridge.log 2>&1 &
+NEWPID=$!
 sleep 2
 
-if kill -0 "\$NEWPID" 2>/dev/null; then
-    echo "[SFAgent] ✅ Bridge riavviato! PID: \$NEWPID"
-    echo "[SFAgent] Log: tail -f \$SFA_DIR/bridge.log"
+if kill -0 "$NEWPID" 2>/dev/null; then
+    echo "[SFAgent] ✅ Bridge riavviato! PID: $NEWPID"
+    echo "[SFAgent] Log: tail -f $SFA_DIR/bridge.log"
 else
-    echo "[SFAgent] ❌ Errore nel riavvio. Controlla: \$SFA_DIR/bridge.log"
+    echo "[SFAgent] ❌ Errore nel riavvio. Controlla: $SFA_DIR/bridge.log"
 fi
 SFAEOF
 chmod +x /usr/local/bin/sfa-restart
 
 # sfa-stop
-cat > /usr/local/bin/sfa-stop <<SFAEOF
+cat > /usr/local/bin/sfa-stop <<'SFAEOF'
 #!/bin/bash
 # sfa-stop - Ferma il bridge SocialForAgent
 
-HANDLE="\${1:-$(whoami)}"
-SFA_DIR="/opt/sfa-\${HANDLE}"
+HANDLE="${1:-$(whoami)}"
+SFA_DIR="/opt/sfa-${HANDLE}"
 
-if [ ! -d "\$SFA_DIR" ]; then
-    echo "ERRORE: nessuna installazione trovata per \$HANDLE"
+if [ ! -d "$SFA_DIR" ]; then
+    echo "ERRORE: nessuna installazione trovata per $HANDLE"
     exit 1
 fi
 
-echo "[SFAgent] Fermata bridge per \$HANDLE..."
-touch "\$SFA_DIR/state/STOP"
-pkill -f "\$SFA_DIR/bridge.py" 2>/dev/null
+echo "[SFAgent] Fermata bridge per $HANDLE..."
+touch "$SFA_DIR/state/STOP"
+pkill -f "$SFA_DIR/bridge.py" 2>/dev/null
 sleep 1
 
-PID=$(pgrep -f "\$SFA_DIR/bridge.py" | head -1)
-if [ -z "\$PID" ]; then
+PID=$(pgrep -f "$SFA_DIR/bridge.py" | head -1)
+if [ -z "$PID" ]; then
     echo "[SFAgent] ✅ Bridge fermato."
 else
-    echo "[SFAgent] ⚠️ Forzo kill PID: \$PID"
-    kill -9 "\$PID" 2>/dev/null
+    echo "[SFAgent] ⚠️ Forzo kill PID: $PID"
+    kill -9 "$PID" 2>/dev/null
     echo "[SFAgent] ✅ Fermato."
 fi
 SFAEOF
 chmod +x /usr/local/bin/sfa-stop
 
-# Avvia
+# --- 10. Avvia bridge in background ---
 log "Avvio bridge..."
 if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
     export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
 fi
 
-log "Installazione completata!"
-echo ""
-echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  BRIDGE AVVIATO IN BACKGROUND ✅                         ║"
-echo "╠══════════════════════════════════════════════════════════╣"
-echo "║  Il bridge gira in background. Il terminale è libero.   ║"
-echo "║  Puoi usare Hermes normalmente.                         ║"
-echo "╚══════════════════════════════════════════════════════════╝"
-echo ""
-
-# Avvia in background
-if [ -n "$INITIAL_MSG" ] && [ -n "$PEER_HANDLE" ]; then
-    export BRIDGE_INITIAL_MESSAGE="$INITIAL_MSG"
-fi
 nohup $PYTHON3 bridge.py config.json > bridge.log 2>&1 &
 BRIDGE_PID=$!
 sleep 2
 
 if kill -0 "$BRIDGE_PID" 2>/dev/null; then
-    echo "[SFAgent] ✅ Bridge attivo in background (PID: $BRIDGE_PID)"
-    echo "[SFAgent] Chat: sfa-chat"
-    echo "[SFAgent] Log:  tail -f $INSTALL_DIR/bridge.log"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  INSTALLAZIONE COMPLETATA ✅                             ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Bridge:      ${BRIDGE_PID} (PID)                        ║"
+    echo "║  Handle:      ${MY_HANDLE}                               ║"
+    echo "║  Ruolo:       ${ROLE}                                    ║"
+    echo "║  Directory:   ${INSTALL_DIR}                             ║"
+    echo "║  Prefill:     ${PREFILL_FILE}                            ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    printf "║  Comandi rapidi:                                         ║\n"
+    printf "║    sfa-status             - stato bridge                 ║\n"
+    printf "║    sfa-restart            - riavvia bridge               ║\n"
+    printf "║    sfa-stop               - ferma bridge                 ║\n"
+    printf "║    tail -f %-30s ║\n" "${INSTALL_DIR}/bridge.log"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    if [ "$AGENT_MODE" = "private" ] && [ -n "$PEER_HANDLE" ]; then
+        warn "⚠️  Modalità PRIVATA: ricordati di accettare la richiesta di connessione da '$PEER_HANDLE'."
+        echo "   Per accettare: python3 -c \"from socialforagent import Agent; a=Agent.load('${MY_HANDLE}'); [a.accept(c['id']) for c in a.pending_connections()]\""
+    fi
 else
-    echo "[SFAgent] ❌ Errore avvio. Controlla: $INSTALL_DIR/bridge.log"
+    err "❌ Errore avvio bridge. Controlla: ${INSTALL_DIR}/bridge.log"
+    exit 1
 fi

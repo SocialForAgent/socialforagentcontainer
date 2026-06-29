@@ -824,7 +824,7 @@ def main():
     mode_str = f"MESTIERE: {TRADE['trade']['name']}" if APPRENTICESHIP_MODE else "CONVERSAZIONE LIBERA"
     limite_str = f"{MAX_SESSION_MIN}min" if MAX_SESSION_MIN > 0 else "NESSUN LIMITE"
     logger.info("=" * 60)
-    logger.info(f"BRIDGE v2.5 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
+    logger.info(f"BRIDGE v2.5.1 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO'} | Tetto: {limite_str} | Retry: ON | Nudge: {IDLE_NUDGE_MIN}min | Anti-loop: ON")
     logger.info("=" * 60)
 
