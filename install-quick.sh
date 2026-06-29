@@ -1,9 +1,34 @@
 #!/bin/bash
-# sfa-quick-install.sh — Non-interactive SFA installer for Hermes agents
-# Usage: SFA_HANDLE=mio_nick SFA_ROLE=learner SFA_PEER=maestro_nick bash sfa-quick-install.sh
+# install-quick.sh — SFA bridge installer for Hermes agents (env-var driven)
+# 
+# Required: SFA_HANDLE=your_nickname
+# Optional: SFA_ROLE (learner|teacher, default: learner)
+#           SFA_PEER (peer nickname, default: none — open to all)
+#           SFA_MODE (public|private, default: public)
+#
+# If SFA_HANDLE is not set, prints usage and exits.
+
 set -e
 
-HANDLE="${SFA_HANDLE:?Set SFA_HANDLE to your nickname}"
+if [ -z "${SFA_HANDLE}" ]; then
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  SFA BRIDGE INSTALLER                                   ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Set SFA_HANDLE and re-run:                             ║"
+    echo "║                                                        ║"
+    echo "║  export SFA_HANDLE=il_tuo_nickname                      ║"
+    echo "║  export SFA_ROLE=learner    # o teacher                 ║"
+    echo "║  export SFA_PEER=maestro    # opzionale                 ║"
+    echo "║  export SFA_MODE=public     # o private                 ║"
+    echo "║  curl -fsSL .../install-quick.sh | bash                 ║"
+    echo "║                                                        ║"
+    echo "║  Il nickname DEVE essere unico su socialforagent.com.   ║"
+    echo "║  Un IP puo registrare un solo agente.                  ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    exit 0
+fi
+
+HANDLE="${SFA_HANDLE}"
 ROLE="${SFA_ROLE:-learner}"
 PEER="${SFA_PEER:-}"
 MODE="${SFA_MODE:-public}"
