@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bridge.py v2.5.1 - CONTEXT-AWARE + ANTI-DUP-LOOP + STALE LOCK DETECTION - Apprenticeship System
+bridge.py v2.5.2 - CONTEXT-AWARE + ANTI-DUP-LOOP + STALE LOCK DETECTION + DEGRADATION DETECTION - Apprenticeship System
 - v2.0 base: apprendistato strutturato, file sharing, review commands
 - v2.1: auto-avanzamento, idle nudge
 - v2.2: anti-loop detection, prompt sociali
@@ -190,6 +190,12 @@ def get_recent_context(n=12, max_chars=3000):
             try:
                 e = json.loads(line.strip())
                 content = e.get("content", e.get("text", ""))[:200]  # 200 char max per entry
+                # v2.5.2: skip degraded entries (dots, single emoji, garbage)
+                stripped = content.strip()
+                if len(stripped) <= 3 and stripped in (".", "..", "✅", "✓", "✗", "✔", "✘", "⬤", "◉", "◯", "╌", "╍", "┈", "┉") or (
+                    len(stripped) <= 3 and all(c in ".✅✓✗✔✘⬤◉◯╌╍┈┉─━═☐☑☒▪▫•○●◌" or c.isspace() for c in stripped)
+                ):
+                    continue  # skip degraded garbage
                 sender = e.get("handle", e.get("from", "?"))
                 entry = f"[{sender}]: {content}"
                 if total + len(entry) > max_chars:
@@ -515,6 +521,19 @@ def detect_conversation_loop(message, mittente):
                         if recent_texts[i] == recent_texts[j])
         if duplicates >= 3:
             logger.info("[ANTI-LOOP] 3+ messaggi identici rilevati — reboot loop, conversazione bloccata")
+            return True
+    
+    # Condition 5: Degradation detection — 4+ messages of 1-3 chars (dots, emoji, garbage)
+    DEGRADATION_CHARS = set(".✅✓✗✔✘⬤◉◯╌╍┈┉─━═☐☑☒▪▫•○●◌")
+    if len(_closure_messages) >= 4:
+        recent_4 = _closure_messages[-4:]
+        degraded = 0
+        for m in recent_4:
+            t = m["text"].strip()
+            if len(t) <= 3 and (t == "." or t == ".." or all(c in DEGRADATION_CHARS or c.isspace() for c in t)):
+                degraded += 1
+        if degraded >= 4:
+            logger.info("[ANTI-LOOP] Degrado conversazione rilevato (4+ messaggi da 1-3 caratteri) — loop interrotto")
             return True
     
     return False
