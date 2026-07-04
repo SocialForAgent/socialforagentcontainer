@@ -262,6 +262,57 @@ def get_current_objective():
                 return obj
     return None
 
+def execute_system_objective(obj):
+    """Execute a system-type objective without involving Hermes.
+    Returns (success: bool, message: str)."""
+    action = obj.get("system_action", "")
+    
+    if action == "transfer_files":
+        files = obj.get("files", [])
+        if not files:
+            return False, "No files specified"
+        
+        results = []
+        for f in files:
+            src = pathlib.Path(f["source"])
+            dest = f["dest"]
+            if not src.exists():
+                results.append("MISSING: " + str(src))
+                continue
+            try:
+                content_text = src.read_text()
+                size = len(content_text)
+                results.append("OK: " + dest + " (" + str(size) + " bytes)")
+            except Exception as e:
+                results.append("ERROR: " + str(src) + " - " + str(e))
+        
+        # Build message: all files as [WRITE:] blocks
+        title = obj.get(title, File transfer)
+        msg_parts = ["[SISTEMA] Trasferimento automatico file: " + title]
+        msg_parts.append("")
+        for f in files:
+            src = pathlib.Path(f["source"])
+            if src.exists():
+                content_text = src.read_text()
+                msg_parts.append("[WRITE: " + f["dest"] + "]")
+                msg_parts.append(content_text)
+                msg_parts.append("[/WRITE]")
+                msg_parts.append("")
+        
+        msg_parts.append("Trasferimento completato: " + str(len([f for f in files if pathlib.Path(f[source]).exists()])) + "/" + str(len(files)) + " file.")
+        message = "\n".join(msg_parts)
+        
+        all_exist = all(pathlib.Path(f["source"]).exists() for f in files)
+        return all_exist, message
+    
+    elif action == "mark_completed":
+        message = obj.get("message", "[SISTEMA] Obiettivo completato: " + obj.get(title, ))
+        return True, message
+    
+    else:
+        return False, "Unknown system action: " + action
+
+
 def get_next_objective():
     state = load_apprendistato()
     completed = set(state.get("objectives_completed", []))
@@ -847,7 +898,7 @@ def main():
     mode_str = f"MESTIERE: {TRADE['trade']['name']}" if APPRENTICESHIP_MODE else "CONVERSAZIONE LIBERA"
     limite_str = f"{MAX_SESSION_MIN}min" if MAX_SESSION_MIN > 0 else "NESSUN LIMITE"
     logger.info("=" * 60)
-    logger.info(f"BRIDGE v2.5.4 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
+    logger.info(f"BRIDGE v2.5.5 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO'} | Tetto: {limite_str} | Retry: ON | Nudge: {IDLE_NUDGE_MIN}min | Anti-loop: ON")
     logger.info("=" * 60)
 
@@ -922,8 +973,24 @@ def main():
             if not can_send_message():
                 logger.warning("[TURN] Non è il mio turno"); continue
 
-            logger.info(f"[TURN] Interrogo Hermes per {mittente}...")
-            risposta = sveglia_hermes(testo, is_teacher=(ROLE=="teacher"))
+            # v2.5.4: check for system-type objective (execute without Hermes)
+            current_obj = get_current_objective()
+            if current_obj and current_obj.get("type") == "system":
+                logger.info(f"[SYSTEM] Eseguo obiettivo automatico: {current_obj[title]}")
+                ok, risposta = execute_system_objective(current_obj)
+                if ok:
+                    logger.info(f"[SYSTEM] Obiettivo completato: {current_obj[title]}")
+                    state = load_apprendistato()
+                    if current_obj[id] not in state.setdefault(objectives_completed, []):
+                        state[objectives_completed].append(current_obj[id])
+                    state[stage] = lezione
+                    state[current_objective] = None
+                    save_apprendistato(state)
+                else:
+                    logger.error(f"[SYSTEM] Fallito: {risposta}")
+            else:
+                logger.info(f"[TURN] Interrogo Hermes per {mittente}...")
+                risposta = sveglia_hermes(testo, is_teacher=(ROLE=="teacher"))
             if not risposta:
                 logger.warning("[HERMES] Nessuna risposta"); continue
             
