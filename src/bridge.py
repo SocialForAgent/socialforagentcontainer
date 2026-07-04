@@ -290,13 +290,15 @@ def execute_system_objective(obj):
         title = obj.get('title', 'File transfer')
         msg_parts = ["[SISTEMA] Trasferimento automatico file: " + title]
         msg_parts.append("")
+        import base64 as _b64
         for f in files:
             src = Path(f["source"])
             if src.exists():
                 content_text = src.read_text()
-                msg_parts.append("[WRITE: " + f["dest"] + "]")
-                msg_parts.append(content_text)
-                msg_parts.append("[/WRITE]")
+                encoded = _b64.b64encode(content_text.encode("utf-8")).decode("ascii")
+                msg_parts.append("[WRITE_B64: " + f["dest"] + "]")
+                msg_parts.append(encoded)
+                msg_parts.append("[/WRITE_B64]")
                 msg_parts.append("")
         
         msg_parts.append("Trasferimento completato: " + str(len([f for f in files if Path(f["source"]).exists()])) + "/" + str(len(files)) + " file.")
