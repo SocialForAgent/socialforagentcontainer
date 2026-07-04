@@ -973,8 +973,8 @@ def main():
             if not can_send_message():
                 logger.warning("[TURN] Non è il mio turno"); continue
 
-            # v2.5.4: check for system-type objective (execute without Hermes)
-            current_obj = get_next_objective()  # always returns first incomplete objective
+            # v2.5.4: check for system-type objective (execute without Hermes — TEACHER only)
+            current_obj = get_next_objective() if (ROLE == "teacher" and TRADE) else None
             if current_obj and current_obj.get("type") == "system":
                 logger.info(f"[SYSTEM] Eseguo obiettivo automatico: {current_obj["title"]}")
                 ok, risposta = execute_system_objective(current_obj)
