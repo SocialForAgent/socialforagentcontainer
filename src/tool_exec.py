@@ -60,6 +60,27 @@ def process_tool_commands(text: str, workdir: str | None = None) -> tuple[str, b
         flags=re.DOTALL
     )
     
+    # ── WRITE_B64 blocks (base64-encoded, safe from regex breakage) ──
+    def _process_write_b64(match):
+        nonlocal had_commands
+        path_str = match.group(1).strip()
+        b64_content = match.group(2).strip()
+        import base64
+        try:
+            content = base64.b64decode(b64_content).decode("utf-8")
+            result = tool_write_file(path_str, content)
+        except Exception as e:
+            result = f"[ERROR: WRITE_B64 decode failed: {e}]"
+        had_commands = True
+        return f"\n[TOOL: WRITE_B64 {path_str}]\n{result}\n[/TOOL]\n"
+    
+    modified = re.sub(
+        r"\[WRITE_B64:\s*([^\]]+)\]\s*\n(.*?)\[/WRITE_B64\]",
+        _process_write_b64,
+        modified,
+        flags=re.DOTALL
+    )
+    
     # ── TERMINAL blocks ──
     def _process_terminal(match):
         nonlocal had_commands
