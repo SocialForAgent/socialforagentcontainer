@@ -287,7 +287,7 @@ def execute_system_objective(obj):
                 results.append("ERROR: " + str(src) + " - " + str(e))
         
         # Build message: all files as [WRITE:] blocks
-        title = obj.get(title, File transfer)
+        title = obj.get('title', 'File transfer')
         msg_parts = ["[SISTEMA] Trasferimento automatico file: " + title]
         msg_parts.append("")
         for f in files:
@@ -306,7 +306,7 @@ def execute_system_objective(obj):
         return all_exist, message
     
     elif action == "mark_completed":
-        message = obj.get("message", "[SISTEMA] Obiettivo completato: " + obj.get(title, ))
+        message = obj.get('message', '[SISTEMA] Obiettivo completato: ' + obj.get('title', ''))
         return True, message
     
     else:
