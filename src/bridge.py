@@ -274,7 +274,7 @@ def execute_system_objective(obj):
         
         results = []
         for f in files:
-            src = pathlib.Path(f["source"])
+            src = Path(f["source"])
             dest = f["dest"]
             if not src.exists():
                 results.append("MISSING: " + str(src))
@@ -291,7 +291,7 @@ def execute_system_objective(obj):
         msg_parts = ["[SISTEMA] Trasferimento automatico file: " + title]
         msg_parts.append("")
         for f in files:
-            src = pathlib.Path(f["source"])
+            src = Path(f["source"])
             if src.exists():
                 content_text = src.read_text()
                 msg_parts.append("[WRITE: " + f["dest"] + "]")
@@ -299,10 +299,10 @@ def execute_system_objective(obj):
                 msg_parts.append("[/WRITE]")
                 msg_parts.append("")
         
-        msg_parts.append("Trasferimento completato: " + str(len([f for f in files if pathlib.Path(f["source"]).exists()])) + "/" + str(len(files)) + " file.")
+        msg_parts.append("Trasferimento completato: " + str(len([f for f in files if Path(f["source"]).exists()])) + "/" + str(len(files)) + " file.")
         message = "\n".join(msg_parts)
         
-        all_exist = all(pathlib.Path(f["source"]).exists() for f in files)
+        all_exist = all(Path(f["source"]).exists() for f in files)
         return all_exist, message
     
     elif action == "mark_completed":
