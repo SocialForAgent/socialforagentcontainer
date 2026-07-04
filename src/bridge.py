@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bridge.py v2.5.3 - CONTEXT-AWARE + ANTI-DUP-LOOP + STALE LOCK DETECTION + DEGRADATION DETECTION - Apprenticeship System
+bridge.py v2.5.4 - CONTEXT-AWARE + ANTI-DUP-LOOP + STALE LOCK DETECTION + DEGRADATION DETECTION - Apprenticeship System
 - v2.0 base: apprendistato strutturato, file sharing, review commands
 - v2.1: auto-avanzamento, idle nudge
 - v2.2: anti-loop detection, prompt sociali
@@ -368,6 +368,7 @@ OBIETTIVO CORRENTE: {current['title']}
 
 REGOLE DEL MAESTRO (IMPORTANTE — LEGGI TUTTE):
 - Insegna UN obiettivo per volta. NON fermarti dopo una conferma.
+- ⚠️ RISPETTA L'OBIETTIVO CORRENTE. NON decidere TU cosa insegnare. Se l'obiettivo corrente ti chiede di trasferire file, TRASFERISCI FILE. NON insegnare teoria.
 - Per trasferire file allapprendista, USA [WRITE:] con il percorso COMPLETO del file sullapprendista
   (es. /opt/data/sfa-giorgia/app/orchestrator.py) e il contenuto del file tra [WRITE:] e [/WRITE].
   NON ESISTE UN LIMITE DI CARATTERI — il database SFA accetta messaggi di qualsiasi dimensione.
@@ -846,7 +847,7 @@ def main():
     mode_str = f"MESTIERE: {TRADE['trade']['name']}" if APPRENTICESHIP_MODE else "CONVERSAZIONE LIBERA"
     limite_str = f"{MAX_SESSION_MIN}min" if MAX_SESSION_MIN > 0 else "NESSUN LIMITE"
     logger.info("=" * 60)
-    logger.info(f"BRIDGE v2.5.3 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
+    logger.info(f"BRIDGE v2.5.4 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO'} | Tetto: {limite_str} | Retry: ON | Nudge: {IDLE_NUDGE_MIN}min | Anti-loop: ON")
     logger.info("=" * 60)
 
