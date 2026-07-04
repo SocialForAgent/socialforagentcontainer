@@ -299,7 +299,7 @@ def execute_system_objective(obj):
                 msg_parts.append("[/WRITE]")
                 msg_parts.append("")
         
-        msg_parts.append("Trasferimento completato: " + str(len([f for f in files if pathlib.Path(f[source]).exists()])) + "/" + str(len(files)) + " file.")
+        msg_parts.append("Trasferimento completato: " + str(len([f for f in files if pathlib.Path(f["source"]).exists()])) + "/" + str(len(files)) + " file.")
         message = "\n".join(msg_parts)
         
         all_exist = all(pathlib.Path(f["source"]).exists() for f in files)
@@ -976,15 +976,15 @@ def main():
             # v2.5.4: check for system-type objective (execute without Hermes)
             current_obj = get_next_objective()  # always returns first incomplete objective
             if current_obj and current_obj.get("type") == "system":
-                logger.info(f"[SYSTEM] Eseguo obiettivo automatico: {current_obj[title]}")
+                logger.info(f"[SYSTEM] Eseguo obiettivo automatico: {current_obj["title"]}")
                 ok, risposta = execute_system_objective(current_obj)
                 if ok:
-                    logger.info(f"[SYSTEM] Obiettivo completato: {current_obj[title]}")
+                    logger.info(f"[SYSTEM] Obiettivo completato: {current_obj["title"]}")
                     state = load_apprendistato()
-                    if current_obj[id] not in state.setdefault(objectives_completed, []):
-                        state[objectives_completed].append(current_obj[id])
-                    state[stage] = lezione
-                    state[current_objective] = None
+                    if current_obj["id"] not in state.setdefault("objectives_completed", []):
+                        state["objectives_completed"].append(current_obj["id"])
+                    state["stage"] = "lezione"
+                    state["current_objective"] = None
                     save_apprendistato(state)
                 else:
                     logger.error(f"[SYSTEM] Fallito: {risposta}")
