@@ -898,7 +898,7 @@ def main():
     mode_str = f"MESTIERE: {TRADE['trade']['name']}" if APPRENTICESHIP_MODE else "CONVERSAZIONE LIBERA"
     limite_str = f"{MAX_SESSION_MIN}min" if MAX_SESSION_MIN > 0 else "NESSUN LIMITE"
     logger.info("=" * 60)
-    logger.info(f"BRIDGE v2.5.5 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
+    logger.info(f"BRIDGE v2.5.6 | Handle: {MY_HANDLE} | Ruolo: {ROLE} | {mode_str}")
     logger.info(f"Peer: {PEER_HANDLE or 'NESSUNO'} | Tetto: {limite_str} | Retry: ON | Nudge: {IDLE_NUDGE_MIN}min | Anti-loop: ON")
     logger.info("=" * 60)
 
@@ -974,7 +974,7 @@ def main():
                 logger.warning("[TURN] Non è il mio turno"); continue
 
             # v2.5.4: check for system-type objective (execute without Hermes)
-            current_obj = get_current_objective()
+            current_obj = get_next_objective()  # always returns first incomplete objective
             if current_obj and current_obj.get("type") == "system":
                 logger.info(f"[SYSTEM] Eseguo obiettivo automatico: {current_obj[title]}")
                 ok, risposta = execute_system_objective(current_obj)
@@ -1056,7 +1056,7 @@ def main():
                 stage = state.get("stage", "idle") if state else "idle"
                 if stage not in ("completed", "verifica_finale"):
                     logger.info(f"[IDLE NUDGE] {idle_min:.1f} min di inattività, invio sollecito")
-                    current_obj = get_current_objective()
+                    current_obj = get_next_objective()  # always returns first incomplete objective
                     obj_name = current_obj['title'] if current_obj else "corrente"
                     nudge = f"Come stai procedendo con l'obiettivo **{obj_name}**? Hai bisogno di aiuto o chiarimenti? Descrivimi cosa hai fatto finora."
                     try:
