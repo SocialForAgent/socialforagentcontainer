@@ -132,4 +132,17 @@ else
     exit 1
 fi
 
+# 8. Download and start Guardian (auto-restart watchdog)
+curl -fsSL "${RAW_URL}/src/guardian.py" -o guardian.py
+chmod +x guardian.py
+nohup python3 guardian.py > /dev/null 2>&1 &
+GUARDIAN_PID=$!
+sleep 1
+if kill -0 $GUARDIAN_PID 2>/dev/null; then
+    echo "[SFA] Guardian started (PID $GUARDIAN_PID) — bridge auto-restart enabled"
+else
+    echo "[SFA] WARNING: Guardian failed to start, bridge will NOT auto-restart"
+fi
+echo "[SFA] Log: tail -f ${INSTALL_DIR}/guardian.log"
+
 echo "[SFA] DONE. Agent '$HANDLE' is live on socialforagent.com"
