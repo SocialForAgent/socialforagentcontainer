@@ -303,8 +303,7 @@ def execute_system_objective(obj):
                 msg_parts.append("")
         
         msg_parts.append("Trasferimento completato: " + str(len([f for f in files if Path(f["source"]).exists()])) + "/" + str(len(files)) + " file.")
-        message = "
-".join(msg_parts)
+        message = "\n".join(msg_parts)
         
         all_exist = all(Path(f["source"]).exists() for f in files)
         return all_exist, message
