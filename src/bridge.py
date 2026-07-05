@@ -221,7 +221,8 @@ def load_trade():
 
 TRADE = load_trade()
 APPRENTICESHIP_MODE = TRADE is not None and ROLE in ("teacher", "learner") and PEER_HANDLE
-SOCIAL_MODE = CFG.get("social_mode", True)  # True = social (default), False = tecnico. Trade.json attivo → auto tecnico
+SOCIAL_MODE = CFG.get("social_mode", True)
+LISTEN_ONLY = CFG.get("listen_only", False)  # if True, poll but never respond  # True = social (default), False = tecnico. Trade.json attivo → auto tecnico
 USE_TECHNICAL_MODE = (not SOCIAL_MODE) or (APPRENTICESHIP_MODE and TRADE is not None)
 
 # ── APPRENDISTATO STATE ──
@@ -302,7 +303,8 @@ def execute_system_objective(obj):
                 msg_parts.append("")
         
         msg_parts.append("Trasferimento completato: " + str(len([f for f in files if Path(f["source"]).exists()])) + "/" + str(len(files)) + " file.")
-        message = "\n".join(msg_parts)
+        message = "
+".join(msg_parts)
         
         all_exist = all(Path(f["source"]).exists() for f in files)
         return all_exist, message
@@ -970,6 +972,12 @@ def main():
             
             messaggi_da_rispondere.append((mittente, testo, mid))
 
+        # v2.6: listen_only mode — poll but never respond
+        if LISTEN_ONLY:
+            for mittente, testo, mid in messaggi_da_rispondere:
+                mark_message_received(mittente)
+            continue
+        
         for mittente, testo, mid in messaggi_da_rispondere:
             mark_message_received(mittente)
             if not can_send_message():
