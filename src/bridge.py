@@ -148,7 +148,7 @@ def update_bridge_status(direction, sender, text, timestamp=None):
     Mantiene gli ultimi EXCHANGE_MAX scambi con riepilogo."""
     global LAST_EXCHANGES
     ts = timestamp or datetime.now(timezone.utc).isoformat()
-    summary = text[:200].replace('\n', ' ') if text else '(vuoto)'
+    summary = text.replace('\n', ' ') if text else '(vuoto)'
     LAST_EXCHANGES.append({
         "time": ts,
         "dir": direction,
@@ -359,7 +359,7 @@ def mark_message_received(from_handle):
 
 def log_conversation_entry(direction, handle, content, metadata=None):
     entry = {"timestamp":datetime.now(timezone.utc).isoformat(),"direction":direction,
-             "handle":handle,"content":content[:500],"metadata":metadata or {}}
+             "handle":handle,"content":content,"metadata":metadata or {}}
     with open(CONVERSATION_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
